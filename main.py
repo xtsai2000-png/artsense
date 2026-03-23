@@ -102,7 +102,7 @@ async def home():
                     <div class="stat-card">
                         <div class="stat-icon">🔍</div>
                         <div class="stat-number">0</div>
-                        <div class="stat-label">已完成比對</div>
+                        <div class="stat-label">已完成AI處理</div>
                         <div class="stat-target">協助審查</div>
                     </div>
                     <div class="stat-card">
