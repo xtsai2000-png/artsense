@@ -1,0 +1,31 @@
+# Artsense MVP 所需套件
+# 安裝：pip install -r requirements.txt
+
+# 向量資料庫
+chromadb>=0.4.0
+faiss-cpu>=1.7.0  # 或 faiss-gpu (GPU 版本)
+
+# AI 模型
+sentence-transformers>=2.2.0  # DINOv2 / CLIP 模型
+torch>=2.0.0  # PyTorch
+torchvision>=0.15.0
+
+# 爬蟲
+scrapling>=0.1.0
+requests>=2.28.0
+beautifulsoup4>=4.12.0
+playwright>=1.40.0
+
+# Web API
+fastapi>=0.100.0
+uvicorn>=0.23.0
+pydantic>=2.0.0
+
+# 報告生成
+reportlab>=4.0.0
+jinja2>=3.1.0
+
+# 工具
+python-dotenv>=1.0.0
+pillow>=10.0.0
+numpy>=1.24.0
