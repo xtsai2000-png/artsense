@@ -17,12 +17,23 @@ app.mount("/static", StaticFiles(directory="web/static"), name="static")
 # Templates
 templates = Jinja2Templates(directory="web/templates")
 
+import glob
+import os
+
+def get_image_count():
+    """動態取得已收集作品數量"""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    images_dir = os.path.join(base_dir, "data/raw/moc/images")
+    if os.path.exists(images_dir):
+        return len([f for f in os.listdir(images_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))])
+    return 0
+
 PROJECT_DATA = {
     "name": "Artsense",
     "name_full": "公共藝術指紋庫",
     "tagline": "杜絕抄襲，守护原创",
     "description": "Artsense 是台灣首個 AI 公共藝術指紋庫",
-    "image_count": 0,
+    "image_count": get_image_count(),
     "target_count": 30000,
     "case_count": 0,
     "start_date": "2026-03-23",
@@ -84,7 +95,7 @@ async def home():
                 <div class="stats-grid">
                     <div class="stat-card">
                         <div class="stat-icon">📸</div>
-                        <div class="stat-number">0</div>
+                        <div class="stat-number" id="imageCount">__IMAGE_COUNT__</div>
                         <div class="stat-label">已收集作品</div>
                         <div class="stat-target">目標 30,000 件</div>
                     </div>
@@ -292,6 +303,8 @@ async def home():
     </body>
     </html>
     """
+    # 動態替換計數
+    html_content = html_content.replace("__IMAGE_COUNT__", str(PROJECT_DATA["image_count"]))
     return HTMLResponse(content=html_content)
 
 @app.get("/api/status")
@@ -300,9 +313,55 @@ async def api_status():
     return {
         "status": "online",
         "version": "MVP v0.1",
-        "image_count": 0,
+        "image_count": PROJECT_DATA["image_count"],
         "target_count": 30000,
     }
+
+@app.get("/api/search")
+async def api_search(q: str = "", limit: int = 5):
+    """搜尋公共藝術作品"""
+    if not q or len(q) < 2:
+        return {"error": "查詢字詞太短", "results": []}
+
+    import os, sys, httpx
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    chroma_path = os.path.join(base_dir, "data/chroma_public_art")
+
+    if not os.path.exists(chroma_path):
+        return {"error": "向量資料庫尚未建立", "results": []}
+
+    try:
+        import chromadb
+        client = chromadb.PersistentClient(path=chroma_path)
+        collection = client.get_collection("public_art_works")
+
+        # 取得查詢向量
+        try:
+            r = httpx.post("http://localhost:11434/api/embeddings", json={"model": "llama3.1:latest", "prompt": q}, timeout=30)
+            q_emb = r.json()["embedding"]
+        except Exception as e:
+            return {"error": f"Ollama 連線失敗: {e}", "results": []}
+
+        # 向量搜尋
+        results = collection.query(query_embeddings=[q_emb], n_results=limit, include=["documents", "metadatas"])
+
+        artworks = []
+        for doc, meta in zip(results["documents"][0], results["metadatas"][0]):
+            artworks.append({
+                "id": meta.get("id", ""),
+                "title": meta.get("title", ""),
+                "artist": meta.get("artist", ""),
+                "year": meta.get("year", ""),
+                "location": meta.get("location", ""),
+                "material": meta.get("material", ""),
+                "budget": meta.get("budget", ""),
+                "desc": meta.get("desc", ""),
+                "url": meta.get("url", ""),
+                "image_file": meta.get("image_file", ""),
+            })
+        return {"query": q, "count": len(artworks), "results": artworks}
+    except Exception as e:
+        return {"error": str(e), "results": []}
 
 if __name__ == "__main__":
     import uvicorn
