@@ -93,12 +93,12 @@ async def home():
         <section class="stats">
             <div class="container">
                 <div class="stats-grid">
-                    <div class="stat-card">
+                    <a href="/gallery" class="stat-card stat-card-link">
                         <div class="stat-icon">📸</div>
                         <div class="stat-number" id="imageCount">__IMAGE_COUNT__</div>
                         <div class="stat-label">已收集作品</div>
                         <div class="stat-target">目標 30,000 件</div>
-                    </div>
+                    </a>
                     <div class="stat-card">
                         <div class="stat-icon">🔍</div>
                         <div class="stat-number">0</div>
@@ -362,6 +362,133 @@ async def api_search(q: str = "", limit: int = 5):
         return {"query": q, "count": len(artworks), "results": artworks}
     except Exception as e:
         return {"error": str(e), "results": []}
+
+@app.get("/gallery", response_class=HTMLResponse)
+async def gallery():
+    """作品圖片牆"""
+    import os, json
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    images_dir = os.path.join(base_dir, "data/raw/moc/images")
+    metadata_file = os.path.join(base_dir, "data/raw/moc/works_metadata.json")
+
+    # 讀取 metadata
+    meta_map = {}
+    if os.path.exists(metadata_file):
+        with open(metadata_file, "r", encoding="utf-8") as f:
+            for item in json.load(f):
+                meta_map[item.get("image_file", "")] = item
+
+    # 取得圖片列表
+    images = []
+    if os.path.exists(images_dir):
+        for fname in sorted(os.listdir(images_dir)):
+            if fname.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                fpath = os.path.join(images_dir, fname)
+                fsize = os.path.getsize(fpath)
+                meta = meta_map.get(fname, {})
+                images.append({
+                    "file": fname,
+                    "title": meta.get("title", fname),
+                    "artist": meta.get("artist", ""),
+                    "year": meta.get("year", ""),
+                    "location": meta.get("location", ""),
+                    "material": meta.get("material", ""),
+                    "url": meta.get("url", ""),
+                    "size_kb": fsize // 1024,
+                })
+
+    # 產生 HTML
+    grid_items = ""
+    for img in images:
+        grid_items += f"""
+        <div class="gallery-item">
+            <a href="/gallery/{img['file']}" target="_blank">
+                <img src="/gallery-img/{img['file']}" alt="{img['title']}" loading="lazy">
+            </a>
+            <div class="gallery-caption">
+                <div class="gallery-title">{img['title']}</div>
+                <div class="gallery-meta">{img['artist']} · {img['year']}</div>
+                <div class="gallery-location">{img['location']}</div>
+            </div>
+        </div>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>作品圖庫 - Artsense</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {{ font-family: 'Noto Sans TC', sans-serif; background: #0a0a0f; color: #e0e0e0; margin: 0; padding: 0; }}
+        .topbar {{ background: #111; padding: 16px 24px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid #222; }}
+        .topbar a {{ color: #7dd3fc; text-decoration: none; font-size: 14px; }}
+        .topbar a:hover {{ text-decoration: underline; }}
+        .page-title {{ color: #fff; font-size: 20px; font-weight: 700; margin: 0; }}
+        .count {{ color: #aaa; font-size: 14px; }}
+        .gallery-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 20px; padding: 24px; max-width: 1400px; margin: 0 auto; }}
+        .gallery-item {{ background: #16161d; border-radius: 12px; overflow: hidden; transition: transform 0.2s, box-shadow 0.2s; }}
+        .gallery-item:hover {{ transform: translateY(-4px); box-shadow: 0 8px 24px rgba(125,211,252,0.15); }}
+        .gallery-item img {{ width: 100%; aspect-ratio: 4/5; object-fit: cover; display: block; }}
+        .gallery-caption {{ padding: 12px; }}
+        .gallery-title {{ font-weight: 600; font-size: 15px; color: #fff; margin-bottom: 4px; }}
+        .gallery-meta {{ font-size: 12px; color: #7dd3fc; margin-bottom: 2px; }}
+        .gallery-location {{ font-size: 12px; color: #888; }}
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <a href="/">← 返回首頁</a>
+        <h1 class="page-title">📸 作品圖庫</h1>
+        <span class="count">共 {len(images)} 件作品</span>
+    </div>
+    <div class="gallery-grid">
+        {grid_items if grid_items else '<p style="color:#888;text-align:center;padding:40px;">尚無作品資料</p>'}
+    </div>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+@app.get("/gallery-img/{filename}")
+async def gallery_img(filename: str):
+    """提供作品圖片"""
+    from fastapi.responses import FileResponse
+    import os
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    fpath = os.path.join(base_dir, "data/raw/moc/images", filename)
+    if os.path.exists(fpath):
+        return FileResponse(fpath)
+    return {"error": "not found"}
+
+@app.get("/api/works")
+async def api_works():
+    """取得作品列表"""
+    import os, json
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    images_dir = os.path.join(base_dir, "data/raw/moc/images")
+    metadata_file = os.path.join(base_dir, "data/raw/moc/works_metadata.json")
+
+    meta_map = {}
+    if os.path.exists(metadata_file):
+        with open(metadata_file, "r", encoding="utf-8") as f:
+            for item in json.load(f):
+                meta_map[item.get("image_file", "")] = item
+
+    works = []
+    if os.path.exists(images_dir):
+        for fname in sorted(os.listdir(images_dir)):
+            if fname.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                meta = meta_map.get(fname, {})
+                works.append({
+                    "file": fname,
+                    "title": meta.get("title", fname),
+                    "artist": meta.get("artist", ""),
+                    "year": meta.get("year", ""),
+                    "location": meta.get("location", ""),
+                    "material": meta.get("material", ""),
+                    "url": meta.get("url", ""),
+                })
+    return {"count": len(works), "works": works}
 
 if __name__ == "__main__":
     import uvicorn
