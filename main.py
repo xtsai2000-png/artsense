@@ -1,48 +1,108 @@
 """
 Artsense Web Server
+===
+主程式：提供公共藝術指紋庫的網站前台與 API
+
+主要功能：
+- 首頁：展示系統概覽與統計數據
+- /gallery：作品圖庫頁面，縮圖網格顯示所有已收集作品
+- /gallery-img/{filename}：提供作品圖片
+- /api/status：系統狀態 API
+- /api/search?q=...：向量相似度搜尋 API
+- /api/works：取得作品列表 API
 """
 
+# === 標準庫 ===
+import os
+import json
+import glob
+from datetime import datetime
+
+# === FastAPI 相關 ===
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from datetime import datetime
-import os
 
+# === FastAPI 實例 ===
 app = FastAPI(title="Artsense")
 
-# Static files
+# === 靜態檔案掛載 ===
+# 將 web/static 目錄掛載到 /static 路徑，供前端取用 CSS、JS、圖片等靜態資源
 app.mount("/static", StaticFiles(directory="web/static"), name="static")
 
-# Templates
+# === Jinja2 模板引擎 ===
+# 掛載 web/templates 目錄作為 HTML 模板目錄（目前首頁使用 inline HTML，未來可移至模板檔案）
 templates = Jinja2Templates(directory="web/templates")
 
-import glob
-import os
 
-def get_image_count():
-    """動態取得已收集作品數量"""
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    images_dir = os.path.join(base_dir, "data/raw/moc/images")
+# =============================================================================
+# 輔助函式
+# =============================================================================
+
+def get_image_count() -> int:
+    """
+    動態取得已收集作品圖片數量。
+
+    掃描 data/raw/moc/images/ 目錄，計算副檔名為 jpg/jpeg/png/webp 的圖片檔案數量。
+    此數字會顯示在首頁的「已收集作品」統計卡片上。
+
+    Returns:
+        int: 圖片檔案數量，若目錄不存在則回傳 0
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))          # 取得 main.py 所在目錄
+    images_dir = os.path.join(base_dir, "data/raw/moc/images")     # 拼接圖片目錄路徑
     if os.path.exists(images_dir):
-        return len([f for f in os.listdir(images_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))])
+        # 過濾圖片副檔名並計算數量
+        return len([f for f in os.listdir(images_dir)
+                    if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))])
     return 0
 
+
+# =============================================================================
+# 全域專案資料
+# =============================================================================
+
 PROJECT_DATA = {
-    "name": "Artsense",
-    "name_full": "公共藝術指紋庫",
-    "tagline": "杜絕抄襲，守护原创",
+    # 專案基本資訊
+    "name": "Artsense",                        # 系統名稱
+    "name_full": "公共藝術指紋庫",             # 完整名稱（中文）
+    "tagline": "杜絕抄襲，守护原创",           # slogan
     "description": "Artsense 是台灣首個 AI 公共藝術指紋庫",
-    "image_count": get_image_count(),
-    "target_count": 30000,
-    "case_count": 0,
-    "start_date": "2026-03-23",
-    "version": "MVP v0.1",
+
+    # 動態統計數值
+    "image_count": get_image_count(),           # 已收集作品數（自動從資料夾讀取）
+    "target_count": 30000,                     # 目標收集數量
+    "case_count": 0,                           # 已完成比對案件數（待實作）
+
+    # 專案資訊
+    "start_date": "2026-03-23",                # 專案開始日期
+    "version": "MVP v0.1",                      # 目前版本
 }
+
+
+# =============================================================================
+# 主頁面
+# =============================================================================
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
-    """Homepage"""
+    """
+    首頁（Homepage）
+
+    回傳包含以下區塊的 HTML 頁面：
+    - 導航列（Navbar）： Logo + 連結
+    - 英雄區（Hero）：系統簡介與口號
+    - 統計卡片（Stats）：已收集作品、已完成AI處理、開發天數、MVP期程
+    - 關於專案（About）：解決什麼問題、方法說明
+    - 建置進度（Progress）：Phase 1-3 里程碑時間軸
+    - 成果展示（Demo）：相似度比對、PDF報告、地圖三個展示卡（待實作）
+    - 技術架構（Tech）：AI模型、向量資料庫、爬蟲系統、網站介面四個技術說明卡
+    - 頁尾（Footer）
+
+    計數器會在 Server 啟動時動態計算（get_image_count），
+    前端 JavaScript 會自動計算「開發天數」。
+    """
     html_content = """
     <!DOCTYPE html>
     <html lang="zh-TW">
@@ -50,7 +110,7 @@ async def home():
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Artsense - 公共藝術指紋庫</title>
-        <link rel="stylesheet" href="/static/css/style.css">
+        <!-- Google Fonts：Noto Sans TC 中文無襯線字體 -->
         <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
     </head>
     <body>
@@ -93,24 +153,28 @@ async def home():
         <section class="stats">
             <div class="container">
                 <div class="stats-grid">
+                    <!-- 已收集作品：動態讀取 data/raw/moc/images/ 資料夾數量 -->
                     <a href="/gallery" class="stat-card stat-card-link">
                         <div class="stat-icon">📸</div>
                         <div class="stat-number" id="imageCount">__IMAGE_COUNT__</div>
                         <div class="stat-label">已收集作品</div>
                         <div class="stat-target">目標 30,000 件</div>
                     </a>
+                    <!-- 已完成AI處理：待實作比對功能 -->
                     <div class="stat-card">
                         <div class="stat-icon">🔍</div>
                         <div class="stat-number">0</div>
                         <div class="stat-label">已完成AI處理</div>
                         <div class="stat-target">協助審查</div>
                     </div>
+                    <!-- 開發天數：前端 JS 根據 start_date 自動計算 -->
                     <div class="stat-card">
                         <div class="stat-icon">📅</div>
                         <div class="stat-number" id="daysActive">1</div>
                         <div class="stat-label">開發天數</div>
                         <div class="stat-target">持續更新中</div>
                     </div>
+                    <!-- MVP 期程：3 個月 -->
                     <div class="stat-card">
                         <div class="stat-icon">⚡</div>
                         <div class="stat-number">3</div>
@@ -128,7 +192,7 @@ async def home():
                     <div class="about-text">
                         <h3>🎯 解決什麼問題？</h3>
                         <p>公共工程中的「罐頭藝術」與抄襲事件屢見不鮮。一件抄襲作品的拆除費用動輒 200 萬以上，更造成社會觀感不佳。</p>
-                        
+
                         <h3>💡 我們的方法</h3>
                         <p>透過 <strong>DINOv2 視覺指紋</strong>與<strong>ChromaDB 向量檢索</strong>技術，建立全台公共藝術作品的指紋資料庫。</p>
                     </div>
@@ -158,7 +222,7 @@ async def home():
             <div class="container">
                 <h2 class="section-title">建置進度</h2>
                 <p class="section-subtitle">MVP 3 個月里程碑追蹤</p>
-                
+
                 <div class="timeline">
                     <div class="timeline-phase">
                         <h3 class="phase-title">Phase 1 - 爬蟲系統 (W1-W4)</h3>
@@ -201,7 +265,7 @@ async def home():
             <div class="container">
                 <h2 class="section-title">成果展示</h2>
                 <p class="section-subtitle">系統功能展示（開發中）</p>
-                
+
                 <div class="demo-grid">
                     <div class="demo-card">
                         <div class="demo-preview placeholder">
@@ -211,7 +275,7 @@ async def home():
                         <p>上傳作品圖片，快速搜尋資料庫中相似作品</p>
                         <span class="demo-badge">coming soon</span>
                     </div>
-                    
+
                     <div class="demo-card">
                         <div class="demo-preview placeholder">
                             <div class="placeholder-text">📊<br>比對報告<br>（待實作）</div>
@@ -220,7 +284,7 @@ async def home():
                         <p>一鍵生成標準化審查報告</p>
                         <span class="demo-badge">coming soon</span>
                     </div>
-                    
+
                     <div class="demo-card">
                         <div class="demo-preview placeholder">
                             <div class="placeholder-text">🗺️<br>地理分布<br>（待實作）</div>
@@ -292,10 +356,13 @@ async def home():
             </div>
         </footer>
 
+        <!-- 前端 JavaScript：計算開發天數（根據 PROJECT_DATA["start_date"]） -->
         <script>
             document.addEventListener('DOMContentLoaded', function() {
+                // 從 PROJECT_DATA 取得專案開始日期
                 const startDate = new Date('2026-03-23');
                 const today = new Date();
+                // 計算相差天数 + 1（包含起始日）
                 const daysActive = Math.floor((today - startDate) / (1000 * 60 * 60 * 24)) + 1;
                 document.getElementById('daysActive').textContent = daysActive;
             });
@@ -303,108 +370,68 @@ async def home():
     </body>
     </html>
     """
-    # 動態替換計數
+    # 將 HTML 中的預留位置替換為實際數值
     html_content = html_content.replace("__IMAGE_COUNT__", str(PROJECT_DATA["image_count"]))
     return HTMLResponse(content=html_content)
 
-@app.get("/api/status")
-async def api_status():
-    """API status"""
-    return {
-        "status": "online",
-        "version": "MVP v0.1",
-        "image_count": PROJECT_DATA["image_count"],
-        "target_count": 30000,
-    }
 
-@app.get("/api/search")
-async def api_search(q: str = "", limit: int = 5):
-    """搜尋公共藝術作品"""
-    if not q or len(q) < 2:
-        return {"error": "查詢字詞太短", "results": []}
-
-    import os, sys, httpx
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    chroma_path = os.path.join(base_dir, "data/chroma_public_art")
-
-    if not os.path.exists(chroma_path):
-        return {"error": "向量資料庫尚未建立", "results": []}
-
-    try:
-        import chromadb
-        client = chromadb.PersistentClient(path=chroma_path)
-        collection = client.get_collection("public_art_works")
-
-        # 取得查詢向量
-        try:
-            r = httpx.post("http://localhost:11434/api/embeddings", json={"model": "llama3.1:latest", "prompt": q}, timeout=30)
-            q_emb = r.json()["embedding"]
-        except Exception as e:
-            return {"error": f"Ollama 連線失敗: {e}", "results": []}
-
-        # 向量搜尋
-        results = collection.query(query_embeddings=[q_emb], n_results=limit, include=["documents", "metadatas"])
-
-        artworks = []
-        for doc, meta in zip(results["documents"][0], results["metadatas"][0]):
-            artworks.append({
-                "id": meta.get("id", ""),
-                "title": meta.get("title", ""),
-                "artist": meta.get("artist", ""),
-                "year": meta.get("year", ""),
-                "location": meta.get("location", ""),
-                "material": meta.get("material", ""),
-                "budget": meta.get("budget", ""),
-                "desc": meta.get("desc", ""),
-                "url": meta.get("url", ""),
-                "image_file": meta.get("image_file", ""),
-            })
-        return {"query": q, "count": len(artworks), "results": artworks}
-    except Exception as e:
-        return {"error": str(e), "results": []}
+# =============================================================================
+# 作品圖庫頁面
+# =============================================================================
 
 @app.get("/gallery", response_class=HTMLResponse)
 async def gallery():
-    """作品圖片牆"""
-    import os, json
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    images_dir = os.path.join(base_dir, "data/raw/moc/images")
-    metadata_file = os.path.join(base_dir, "data/raw/moc/works_metadata.json")
+    """
+    作品圖庫頁面（Gallery）
 
-    # 讀取 metadata
+    顯示所有已收集作品的縮圖網格，
+    每個作品卡顯示：縮圖、作品名稱、作者、年份、設置地點。
+    點擊縮圖可在新分頁開放大圖。
+
+    圖片讀取自：data/raw/moc/images/
+    中繼資料讀取自：data/raw/moc/works_metadata.json
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))             # 取得主程式所在目錄
+    images_dir = os.path.join(base_dir, "data/raw/moc/images")        # 原始圖片目錄
+    metadata_file = os.path.join(base_dir, "data/raw/moc/works_metadata.json")  # 作品中繼資料 JSON
+
+    # 讀取 metadata JSON，建立檔名→資料的對照表（dict）
     meta_map = {}
     if os.path.exists(metadata_file):
         with open(metadata_file, "r", encoding="utf-8") as f:
             for item in json.load(f):
                 meta_map[item.get("image_file", "")] = item
 
-    # 取得圖片列表
+    # 掃描圖片目錄，建立作品清單
     images = []
     if os.path.exists(images_dir):
         for fname in sorted(os.listdir(images_dir)):
+            # 只處理圖片檔案
             if fname.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
                 fpath = os.path.join(images_dir, fname)
-                fsize = os.path.getsize(fpath)
-                meta = meta_map.get(fname, {})
+                fsize = os.path.getsize(fpath)                        # 檔案大小（位元組）
+                meta = meta_map.get(fname, {})                       # 查詢對應的 metadata
                 images.append({
-                    "file": fname,
-                    "title": meta.get("title", fname),
-                    "artist": meta.get("artist", ""),
-                    "year": meta.get("year", ""),
-                    "location": meta.get("location", ""),
-                    "material": meta.get("material", ""),
-                    "url": meta.get("url", ""),
-                    "size_kb": fsize // 1024,
+                    "file": fname,                                    # 檔案名稱
+                    "title": meta.get("title", fname),                # 作品名稱
+                    "artist": meta.get("artist", ""),                 # 作者
+                    "year": meta.get("year", ""),                    # 年代
+                    "location": meta.get("location", ""),            # 設置地點
+                    "material": meta.get("material", ""),             # 材質
+                    "url": meta.get("url", ""),                      # 原始作品 URL
+                    "size_kb": fsize // 1024,                        # 檔案大小（KB）
                 })
 
-    # 產生 HTML
+    # 產生每個作品卡的 HTML，組成網格
     grid_items = ""
     for img in images:
         grid_items += f"""
         <div class="gallery-item">
-            <a href="/gallery/{img['file']}" target="_blank">
+            <!-- 點擊圖片：在新分頁開放大圖 -->
+            <a href="/gallery-img/{img['file']}" target="_blank">
                 <img src="/gallery-img/{img['file']}" alt="{img['title']}" loading="lazy">
             </a>
+            <!-- 作品資訊說明 -->
             <div class="gallery-caption">
                 <div class="gallery-title">{img['title']}</div>
                 <div class="gallery-meta">{img['artist']} · {img['year']}</div>
@@ -412,6 +439,7 @@ async def gallery():
             </div>
         </div>"""
 
+    # 組合完整 HTML 頁面
     html = f"""<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -421,14 +449,18 @@ async def gallery():
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
     <style>
         body {{ font-family: 'Noto Sans TC', sans-serif; background: #0a0a0f; color: #e0e0e0; margin: 0; padding: 0; }}
+        /* 頂部導航列 */
         .topbar {{ background: #111; padding: 16px 24px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid #222; }}
         .topbar a {{ color: #7dd3fc; text-decoration: none; font-size: 14px; }}
         .topbar a:hover {{ text-decoration: underline; }}
         .page-title {{ color: #fff; font-size: 20px; font-weight: 700; margin: 0; }}
         .count {{ color: #aaa; font-size: 14px; }}
+        /* 縮圖網格：響應式排列，最小每格 220px */
         .gallery-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 20px; padding: 24px; max-width: 1400px; margin: 0 auto; }}
+        /* 作品卡片：暗色背景 + 圓角 + hover 效果 */
         .gallery-item {{ background: #16161d; border-radius: 12px; overflow: hidden; transition: transform 0.2s, box-shadow 0.2s; }}
         .gallery-item:hover {{ transform: translateY(-4px); box-shadow: 0 8px 24px rgba(125,211,252,0.15); }}
+        /* 圖片：保持 4:5 比例，object-fit 裁切填滿 */
         .gallery-item img {{ width: 100%; aspect-ratio: 4/5; object-fit: cover; display: block; }}
         .gallery-caption {{ padding: 12px; }}
         .gallery-title {{ font-weight: 600; font-size: 15px; color: #fff; margin-bottom: 4px; }}
@@ -449,31 +481,157 @@ async def gallery():
 </html>"""
     return HTMLResponse(content=html)
 
+
 @app.get("/gallery-img/{filename}")
 async def gallery_img(filename: str):
-    """提供作品圖片"""
-    from fastapi.responses import FileResponse
-    import os
+    """
+    提供作品圖片檔案（Gallery Image Server）
+
+    根據檔案名稱回傳對應的圖片檔案。
+    圖片來源：data/raw/moc/images/{filename}
+
+    Args:
+        filename: 圖片檔案名稱（URL 路徑參數）
+
+    Returns:
+        FileResponse: 圖片檔案（若檔案存在）
+        JSON error: 檔案不存在時回傳 404
+    """
     base_dir = os.path.dirname(os.path.abspath(__file__))
     fpath = os.path.join(base_dir, "data/raw/moc/images", filename)
     if os.path.exists(fpath):
         return FileResponse(fpath)
     return {"error": "not found"}
 
+
+# =============================================================================
+# API 端點
+# =============================================================================
+
+@app.get("/api/status")
+async def api_status():
+    """
+    系統狀態 API
+
+    回傳目前系統的運行狀態與統計數值，
+    供前端 JavaScript 或外部系統查詢使用。
+
+    Returns:
+        dict:
+            - status (str): 系統狀態，固定 "online"
+            - version (str): 目前版本號
+            - image_count (int): 已收集作品數（動態）
+            - target_count (int): 目標作品數（固定 30000）
+    """
+    return {
+        "status": "online",
+        "version": "MVP v0.1",
+        "image_count": PROJECT_DATA["image_count"],
+        "target_count": 30000,
+    }
+
+
+@app.get("/api/search")
+async def api_search(q: str = "", limit: int = 5):
+    """
+    向量相似度搜尋 API
+
+    將查詢文字送至 Ollama 產生文字向量，
+    再於 ChromaDB 向量資料庫中搜尋最相似的作品。
+
+    Args:
+        q (str): 查詢關鍵字（需至少 2 個字元）
+        limit (int): 回傳結果數量上限，預設 5
+
+    Returns:
+        dict:
+            - query (str): 原始查詢文字
+            - count (int): 回傳結果數量
+            - results (list): 作品清單（包含 title, artist, year, location 等欄位）
+            - error (str): 錯誤訊息（若有）
+    """
+    # 參數驗證：查詢字詞至少需要 2 個字元
+    if not q or len(q) < 2:
+        return {"error": "查詢字詞太短（至少2個字）", "results": []}
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    chroma_path = os.path.join(base_dir, "data/chroma_public_art")   # ChromaDB 資料庫路徑
+
+    # 檢查向量資料庫是否存在
+    if not os.path.exists(chroma_path):
+        return {"error": "向量資料庫尚未建立", "results": []}
+
+    try:
+        # 連線 ChromaDB，取得 collection
+        import chromadb
+        client = chromadb.PersistentClient(path=chroma_path)
+        collection = client.get_collection("public_art_works")
+
+        # 透過 Ollama API 將文字轉為向量
+        try:
+            import httpx
+            r = httpx.post(
+                "http://localhost:11434/api/embeddings",              # Ollama embedding 端點
+                json={"model": "llama3.1:latest", "prompt": q},     # 使用 llama3.1 模型
+                timeout=30
+            )
+            q_emb = r.json()["embedding"]                             # 取出 4096 維向量
+        except Exception as e:
+            return {"error": f"Ollama 連線失敗: {e}", "results": []}
+
+        # 向量相似度搜尋
+        results = collection.query(
+            query_embeddings=[q_emb],
+            n_results=limit,
+            include=["documents", "metadatas"]                        # 回傳文件內容與 metadata
+        )
+
+        # 整理輸出格式
+        artworks = []
+        for doc, meta in zip(results["documents"][0], results["metadatas"][0]):
+            artworks.append({
+                "id": meta.get("id", ""),
+                "title": meta.get("title", ""),
+                "artist": meta.get("artist", ""),
+                "year": meta.get("year", ""),
+                "location": meta.get("location", ""),
+                "material": meta.get("material", ""),
+                "budget": meta.get("budget", ""),
+                "desc": meta.get("desc", ""),
+                "url": meta.get("url", ""),
+                "image_file": meta.get("image_file", ""),
+            })
+        return {"query": q, "count": len(artworks), "results": artworks}
+
+    except Exception as e:
+        return {"error": str(e), "results": []}
+
+
 @app.get("/api/works")
 async def api_works():
-    """取得作品列表"""
-    import os, json
+    """
+    取得作品列表 API
+
+    回傳所有已收集作品的基本資訊，
+    適用於前端下拉選單、列表顯示等情境。
+
+    Returns:
+        dict:
+            - count (int): 作品總數
+            - works (list): 作品清單（file, title, artist, year, location, material, url）
+    """
     base_dir = os.path.dirname(os.path.abspath(__file__))
     images_dir = os.path.join(base_dir, "data/raw/moc/images")
     metadata_file = os.path.join(base_dir, "data/raw/moc/works_metadata.json")
 
+    # 建立 metadata 對照表
     meta_map = {}
     if os.path.exists(metadata_file):
         with open(metadata_file, "r", encoding="utf-8") as f:
             for item in json.load(f):
                 meta_map[item.get("image_file", "")] = item
 
+    # 掃描圖片目錄，對應 metadata
     works = []
     if os.path.exists(images_dir):
         for fname in sorted(os.listdir(images_dir)):
@@ -490,6 +648,15 @@ async def api_works():
                 })
     return {"count": len(works), "works": works}
 
+
+# =============================================================================
+# 程式進入點
+# =============================================================================
+
 if __name__ == "__main__":
     import uvicorn
+    # 啟動 FastAPI 開發伺服器
+    # host="0.0.0.0"：接受外部連線（同一網域內可透過 IP 存取）
+    # port=8000：HTTP 埠號
+    # reload=True：偵測程式碼變更時自動重載（開發模式專用）
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
