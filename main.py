@@ -59,6 +59,27 @@ def get_image_count() -> int:
     return 0
 
 
+def get_dino_count() -> int:
+    """
+    動態取得已完成 DINOv2 特徵萃取的作品數量。
+
+    查詢 ChromaDB 的 public_art_dino_features collection，回傳已提取特徵的作品數量。
+    此數字會顯示在首頁的「已完成AI處理」統計卡片上。
+
+    Returns:
+        int: DINOv2 特徵作品數量，若查詢失敗則回傳 0
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    chroma_dir = os.path.join(base_dir, "data/chroma_public_art")
+    try:
+        import chromadb
+        client = chromadb.PersistentClient(path=chroma_dir)
+        collection = client.get_collection("public_art_dino_features")
+        return collection.count()
+    except Exception:
+        return 0
+
+
 # =============================================================================
 # 全域專案資料
 # =============================================================================
@@ -72,6 +93,7 @@ PROJECT_DATA = {
 
     # 動態統計數值
     "image_count": get_image_count(),           # 已收集作品數（自動從資料夾讀取）
+    "dino_count": get_dino_count(),             # 已完成AI處理（自動從ChromaDB讀取）
     "target_count": 30000,                     # 目標收集數量
     "case_count": 0,                           # 已完成比對案件數（待實作）
 
@@ -110,6 +132,7 @@ async def home():
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Artsense - 公共藝術指紋庫</title>
+        <link rel="stylesheet" href="/static/css/style.css">
         <!-- Google Fonts：Noto Sans TC 中文無襯線字體 -->
         <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
     </head>
@@ -160,10 +183,10 @@ async def home():
                         <div class="stat-label">已收集作品</div>
                         <div class="stat-target">目標 30,000 件</div>
                     </a>
-                    <!-- 已完成AI處理：待實作比對功能 -->
+                    <!-- 已完成AI處理：自動從ChromaDB讀取 -->
                     <div class="stat-card">
                         <div class="stat-icon">🔍</div>
-                        <div class="stat-number">0</div>
+                        <div class="stat-number" id="dinoCount">__DINO_COUNT__</div>
                         <div class="stat-label">已完成AI處理</div>
                         <div class="stat-target">協助審查</div>
                     </div>
@@ -372,6 +395,7 @@ async def home():
     """
     # 將 HTML 中的預留位置替換為實際數值
     html_content = html_content.replace("__IMAGE_COUNT__", str(PROJECT_DATA["image_count"]))
+    html_content = html_content.replace("__DINO_COUNT__", str(PROJECT_DATA["dino_count"]))
     return HTMLResponse(content=html_content)
 
 
