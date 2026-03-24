@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Artsense - 相似度比對</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            min-height: 100vh;
+        }
+        .navbar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .navbar h1 { font-size: 1.5rem; font-weight: 500; }
+        .navbar a { color: white; text-decoration: none; opacity: 0.9; }
+        .navbar a:hover { opacity: 1; }
+        
+        .container { max-width: 1000px; margin: 0 auto; padding: 2rem; }
+        
+        .step { display: none; }
+        .step.active { display: block; }
+        
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 2rem;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            margin-bottom: 1.5rem;
+        }
+        
+        .step-title {
+            font-size: 1.25rem;
+            font-weight: 500;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .step-num {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9rem;
+        }
+        
+        .upload-area {
+            border: 2px dashed #ddd;
+            border-radius: 12px;
+            padding: 3rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .upload-area:hover { border-color: #667eea; background: #f8f6ff; }
+        .upload-area.has-file { border-color: #667eea; background: #f8f6ff; }
+        .upload-icon { font-size: 3rem; margin-bottom: 1rem; }
+        .upload-text { color: #666; font-size: 0.95rem; }
+        
+        .preview-container { text-align: center; }
+        .preview-img {
+            max-width: 100%;
+            max-height: 400px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        
+        .btn-group { display: flex; gap: 1rem; justify-content: center; margin-top: 1.5rem; }
+        .btn {
+            padding: 0.875rem 2rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(102,126,234,0.4); }
+        .btn-secondary { background: #e9ecef; color: #495057; }
+        .btn-secondary:hover { background: #dee2e6; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-danger:hover { background: #c82333; }
+        
+        .nobg-option {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            margin: 1rem 0;
+            font-size: 1rem;
+        }
+        .nobg-option input { width: 20px; height: 20px; }
+        
+        .result-card {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            display: flex;
+            gap: 1.5rem;
+            align-items: center;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        .result-card.high-match { border-color: #28a745; background: #f8fff8; }
+        .result-card .thumb {
+            width: 120px;
+            height: 120px;
+            object-fit: cover;
+            border-radius: 8px;
+            flex-shrink: 0;
+        }
+        .result-card .info { flex: 1; }
+        .result-card .title { font-size: 1.1rem; font-weight: 500; margin-bottom: 0.5rem; }
+        .result-card .meta { color: #666; font-size: 0.9rem; margin-bottom: 0.25rem; }
+        .result-card .similarity { font-size: 1.5rem; font-weight: 700; color: #667eea; }
+        .result-card .similarity.high { color: #28a745; }
+        .result-badge {
+            background: #28a745;
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            margin-left: 1rem;
+        }
+        
+        .stats-bar {
+            background: white;
+            border-radius: 12px;
+            padding: 1rem 1.5rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            gap: 2rem;
+            font-size: 0.95rem;
+        }
+        .stats-bar .stat { display: flex; align-items: center; gap: 0.5rem; }
+        .stats-bar .num { font-weight: 700; color: #667eea; font-size: 1.25rem; }
+        
+        .loading {
+            text-align: center;
+            padding: 3rem;
+        }
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #e9ecef;
+            border-top-color: #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        
+        .toast {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            padding: 1rem 1.5rem;
+            border-radius: 8px;
+            color: white;
+            font-weight: 500;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: all 0.3s;
+            z-index: 2000;
+        }
+        .toast.show { opacity: 1; transform: translateY(0); }
+        .toast.error { background: #dc3545; }
+        .toast.success { background: #28a745; }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <h1>🔍 Artsense 相似度比對</h1>
+        <a href="/">← 返回首頁</a>
+    </nav>
+
+    <div class="container">
+        <!-- Step 1: Upload -->
+        <div class="step active" id="step1">
+            <div class="card">
+                <div class="step-title">
+                    <span class="step-num">1</span>
+                    上傳圖片
+                </div>
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-icon">📤</div>
+                    <div class="upload-text">點擊或拖曳圖片到此處上傳</div>
+                    <div class="upload-text" style="font-size:0.8rem; margin-top:0.5rem;">支援 JPG, PNG, WEBP</div>
+                </div>
+                <input type="file" id="fileInput" accept="image/*" style="display:none;">
+            </div>
+        </div>
+
+        <!-- Step 2: Preview & Nobg Option -->
+        <div class="step" id="step2">
+            <div class="card">
+                <div class="step-title">
+                    <span class="step-num">2</span>
+                    圖片前處理
+                </div>
+                <div class="preview-container">
+                    <img id="previewImg" class="preview-img" src="" alt="預覽">
+                </div>
+                <div class="nobg-option">
+                    <input type="checkbox" id="nobgCheck" checked>
+                    <label for="nobgCheck">✓ 自動去背（移除背景）</label>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-secondary" onclick="resetUpload()">重新上傳</button>
+                    <button class="btn btn-primary" onclick="processImage()">處理圖片</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 3: Processing Review -->
+        <div class="step" id="step3">
+            <div class="card">
+                <div class="step-title">
+                    <span class="step-num">3</span>
+                    審查處理結果
+                </div>
+                <div class="preview-container">
+                    <img id="processedImg" class="preview-img" src="" alt="處理結果">
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-danger" onclick="rejectProcessing()">重新處理</button>
+                    <button class="btn btn-primary" onclick="approveAndSearch()">通過審查 → 開始比對</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 4: Results -->
+        <div class="step" id="step4">
+            <div class="card">
+                <div class="step-title">
+                    <span class="step-num">4</span>
+                    比對結果
+                </div>
+                <div class="stats-bar" id="resultStats">
+                    <div class="stat">
+                        <span>比對資料庫：</span>
+                        <span class="num" id="totalCount">-</span>
+                        <span>筆</span>
+                    </div>
+                    <div class="stat">
+                        <span>相似度 ≥50%：</span>
+                        <span class="num" id="matchCount">-</span>
+                        <span>筆</span>
+                    </div>
+                </div>
+                <div id="resultsList"></div>
+            </div>
+        </div>
+
+        <!-- Step 5: Loading Progress -->
+        <div class="step" id="step5">
+            <div class="card">
+                <div class="step-title">
+                    <span class="step-num">4</span>
+                    比對中...
+                </div>
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <div id="progressText" style="margin-top:1rem; font-size:1.1rem;">準備中...</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Loading -->
+        <div class="step" id="steploading">
+            <div class="card">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <div id="loadingText">處理中...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        let uploadedFile = null;
+        let processedImageBlob = null;
+        let searchId = null;
+
+        // Step navigation
+        function showStep(num) {
+            document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+            document.getElementById('step' + num).classList.add('active');
+        }
+
+        // File upload
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+
+        uploadArea.addEventListener('click', () => fileInput.click());
+        uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('has-file'); });
+        uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('has-file'));
+        uploadArea.addEventListener('drop', e => {
+            e.preventDefault();
+            uploadArea.classList.remove('has-file');
+            if (e.dataTransfer.files.length > 0) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+        fileInput.addEventListener('change', e => {
+            if (e.target.files.length > 0) handleFile(e.target.files[0]);
+        });
+
+        function handleFile(file) {
+            if (!file.type.startsWith('image/')) {
+                showToast('請上傳圖片檔案', 'error');
+                return;
+            }
+            uploadedFile = file;
+            const reader = new FileReader();
+            reader.onload = e => {
+                document.getElementById('previewImg').src = e.target.result;
+                showStep(2);
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function resetUpload() {
+            uploadedFile = null;
+            processedImageBlob = null;
+            searchId = null;
+            fileInput.value = '';
+            showStep(1);
+        }
+
+        async function processImage() {
+            if (!uploadedFile) return;
+            
+            showStep('loading');
+            var loadingText = document.getElementById('loadingText');
+            if (loadingText) loadingText.textContent = '上傳圖片中...';
+
+            try {
+                // Upload and process
+                const formData = new FormData();
+                formData.append('file', uploadedFile);
+                formData.append('remove_bg', document.getElementById('nobgCheck').checked);
+
+                const res = await fetch('/api/compare/upload', { method: 'POST', body: formData });
+                const data = await res.json();
+                
+                if (data.error) throw new Error(data.error);
+
+                searchId = data.search_id;
+                
+                // Load processed image
+                const imgResponse = await fetch(`/api/compare/image/${searchId}`);
+                const blob = await imgResponse.blob();
+                processedImageBlob = blob;
+                
+                document.getElementById('processedImg').src = URL.createObjectURL(blob);
+                showStep(3);
+            } catch (err) {
+                showToast('處理失敗: ' + err.message, 'error');
+                showStep(2);
+            }
+        }
+
+        function rejectProcessing() {
+            showToast('請自行使用其他工具處理圖片後重新上傳', 'error');
+            resetUpload();
+        }
+
+        async function approveAndSearch() {
+            if (!searchId) return;
+            
+            showStep(5);
+            document.getElementById('progressText').textContent = '連接中...';
+
+            try {
+                const response = await fetch(`/api/compare/search/${searchId}`);
+                if (!response.ok) throw new Error('網路錯誤，狀態碼：' + response.status);
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                
+                // SSE 解析迴圈
+                while (true) {
+                    const { done, value } = await reader.read();
+                    
+                    // 解碼新資料（value 可能為 undefined）
+                    if (value) {
+                        buffer += decoder.decode(value, { stream: true });
+                    }
+                    
+                    // done=true 時，強制 flush decoder 取回殘留資料
+                    if (done) {
+                        buffer += decoder.decode();
+                    }
+                    
+                    // 處理緩衝區中的所有完整 SSE 事件（以 \n\n 分隔）
+                    while (buffer.includes('\n\n')) {
+                        const eventEnd = buffer.indexOf('\n\n');
+                        const eventBlock = buffer.slice(0, eventEnd);
+                        buffer = buffer.slice(eventEnd + 2);
+                        
+                        let eventType = 'message';
+                        let eventData = null;
+                        
+                        for (const line of eventBlock.split('\n')) {
+                            if (line.startsWith('event:')) {
+                                eventType = line.slice(6).trim();
+                            } else if (line.startsWith('data:')) {
+                                try {
+                                    eventData = JSON.parse(line.slice(5).trim());
+                                } catch (e) {}
+                            }
+                        }
+                        
+                        if (!eventData) continue;
+                        
+                        // 錯誤事件
+                        if (eventType === 'error' || eventData.error) {
+                            throw new Error(eventData.error || '未知錯誤');
+                        }
+                        
+                        // 狀態訊息
+                        if (eventType === 'status' || eventType === 'message') {
+                            const el = document.getElementById('progressText');
+                            if (el) el.textContent = eventData.message || '處理中...';
+                        }
+                        
+                        // 進度更新
+                        else if (eventType === 'progress') {
+                            const el = document.getElementById('progressText');
+                            if (el) el.textContent = `比對中：${eventData.current} / ${eventData.total} 作品`;
+                        }
+                        
+                        // 完成事件
+                        else if (eventType === 'complete' || eventData.success) {
+                            displayResults(eventData);
+                            showStep(4);
+                            return; // 完成，立即結束
+                        }
+                    }
+                    
+                    if (done) break;
+                }
+                
+                // 流結束但沒收到完成事件
+                throw new Error('伺服器連線異常中斷');
+                
+            } catch (err) {
+                showToast('比對失敗: ' + err.message, 'error');
+                showStep(3);
+            }
+        }
+        
+        function displayResults(data) {
+            document.getElementById('totalCount').textContent = data.total || 0;
+            document.getElementById('matchCount').textContent = data.matches || 0;
+
+            const resultsList = document.getElementById('resultsList');
+            resultsList.innerHTML = '';
+
+            if (data.results.length === 0) {
+                resultsList.innerHTML = '<p style="text-align:center; color:#666; padding:2rem;">沒有找到相似作品（相似度皆 < 50%）</p>';
+            } else {
+                data.results.forEach(item => {
+                    const isHigh = item.similarity >= 50;
+                    const card = document.createElement('div');
+                    card.className = 'result-card' + (isHigh ? ' high-match' : '');
+                    card.innerHTML = `
+                        <img class="thumb" src="/gallery-img/${item.cropped_file}" alt="${item.title}">
+                        <div class="info">
+                            <div class="title">${item.title}${isHigh ? '<span class="result-badge">高度相似</span>' : ''}</div>
+                            <div class="meta">作者：${item.artist || '未知'}</div>
+                            <div class="meta">年代：${item.year || '未知'}</div>
+                            <div class="meta">地點：${item.location || '未知'}</div>
+                        </div>
+                        <div class="similarity ${isHigh ? 'high' : ''}">${item.similarity.toFixed(1)}%</div>
+                    `;
+                    resultsList.appendChild(card);
+                });
+            }
+        }
+
+        function showToast(message, type) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'toast ' + type + ' show';
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+    </script>
+</body>
+</html>

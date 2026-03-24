@@ -61,23 +61,25 @@ def get_image_count() -> int:
 
 def get_dino_count() -> int:
     """
-    動態取得已完成 DINOv2 特徵萃取的作品數量。
+    動態取得已通過審核的作品數量。
 
-    查詢 ChromaDB 的 public_art_dino_features collection，回傳已提取特徵的作品數量。
+    讀取審核狀態檔案 review_status.json，回傳已通過審核的作品數量。
     此數字會顯示在首頁的「已完成AI處理」統計卡片上。
 
     Returns:
-        int: DINOv2 特徵作品數量，若查詢失敗則回傳 0
+        int: 已通過審核的作品數量
     """
+    import json
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    chroma_dir = os.path.join(base_dir, "data/chroma_public_art")
+    status_file = os.path.join(base_dir, "data/raw/moc/review_status.json")
     try:
-        import chromadb
-        client = chromadb.PersistentClient(path=chroma_dir)
-        collection = client.get_collection("public_art_dino_features")
-        return collection.count()
+        if os.path.exists(status_file):
+            with open(status_file, "r", encoding="utf-8") as f:
+                status = json.load(f)
+            return sum(1 for v in status.values() if v.get("status") == "approved")
     except Exception:
-        return 0
+        pass
+    return 0
 
 
 # =============================================================================
@@ -147,6 +149,7 @@ async def home():
                     <li><a href="#about">關於</a></li>
                     <li><a href="#progress">進度</a></li>
                     <li><a href="#demo">展示</a></li>
+                    <li><a href="/compare" target="_blank">🔍 比對</a></li>
                     <li><a href="/admin" target="_blank">🔧 審核</a></li>
                 </ul>
             </div>
@@ -359,6 +362,15 @@ async def home():
                             <li>FastAPI 後端</li>
                             <li>響應式設計</li>
                             <li>PDF 報告生成</li>
+                        </ul>
+                    </div>
+                    <div class="tech-card">
+                        <div class="tech-icon">✂️</div>
+                        <h3>圖片前處理</h3>
+                        <ul>
+                            <li>自動切割主體區域</li>
+                            <li>rembg 去背（U2-Net）</li>
+                            <li>DINOv2 特徵萃取</li>
                         </ul>
                     </div>
                 </div>
@@ -824,6 +836,226 @@ async def api_admin_reject(work_id: str):
     save_review_status(review_status)
 
     return {"success": True, "message": "已標記為需要重新處理"}
+
+
+# =============================================================================
+# 相似度比對流程
+# =============================================================================
+
+import shutil
+import uuid
+from fastapi import UploadFile
+
+@app.get("/compare", response_class=HTMLResponse)
+async def compare_page():
+    """相似度比對頁面"""
+    with open("web/templates/compare.html", "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
+
+@app.post("/api/compare/upload")
+async def api_compare_upload(file: UploadFile, remove_bg: bool = True):
+    """
+    上傳圖片並進行前處理
+    
+    1. 儲存原始圖片
+    2. 若 remove_bg=True，套用 rembg 去背
+    3. 回傳 search_id 供後續使用
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    temp_dir = os.path.join(base_dir, "data/temp_compare")
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    search_id = str(uuid.uuid4())[:8]
+    orig_path = os.path.join(temp_dir, f"{search_id}_orig.jpg")
+    
+    # 儲存原始圖片
+    with open(orig_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    
+    processed_path = orig_path
+    if remove_bg:
+        try:
+            from rembg import remove
+            from PIL import Image
+            
+            img = Image.open(orig_path)
+            result = remove(img)
+            processed_path = os.path.join(temp_dir, f"{search_id}_processed.png")
+            result.save(processed_path)
+        except Exception as e:
+            # 如果去背失敗，使用原始圖片
+            processed_path = orig_path
+    
+    return {
+        "success": True,
+        "search_id": search_id,
+        "has_processed": remove_bg
+    }
+
+
+@app.get("/api/compare/image/{search_id}")
+async def api_compare_image(search_id: str):
+    """取得處理後的圖片"""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    temp_dir = os.path.join(base_dir, "data/temp_compare")
+    
+    # 優先回傳處理過的圖片
+    processed_path = os.path.join(temp_dir, f"{search_id}_processed.png")
+    if os.path.exists(processed_path):
+        return FileResponse(processed_path)
+    
+    # 否則回傳原始圖片
+    orig_path = os.path.join(temp_dir, f"{search_id}_orig.jpg")
+    if os.path.exists(orig_path):
+        return FileResponse(orig_path)
+    
+    return {"error": "Image not found"}
+
+
+@app.get("/api/compare/search/{search_id}")
+async def api_compare_search(search_id: str):
+    """
+    對處理過的圖片進行相似度比對（使用 Server-Sent Events）
+    """
+    from fastapi.responses import StreamingResponse
+    import time
+    import asyncio
+    
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    temp_dir = os.path.join(base_dir, "data/temp_compare")
+    
+    processed_path = os.path.join(temp_dir, f"{search_id}_processed.png")
+    orig_path = os.path.join(temp_dir, f"{search_id}_orig.jpg")
+    img_path = processed_path if os.path.exists(processed_path) else orig_path
+    
+    if not os.path.exists(img_path):
+        return {"error": "Image not found"}
+    
+    async def generate():
+        # 讀取審核狀態
+        status_file = os.path.join(base_dir, "data/raw/moc/review_status.json")
+        with open(status_file, "r", encoding="utf-8") as f:
+            status_data = json.load(f)
+        approved_keys = {k for k, v in status_data.items() if v.get("status") == "approved"}
+        
+        # 載入 DINOv2
+        yield f"event: status\ndata: {json.dumps({'message': '載入 DINOv2 模型...'})}\n\n"
+        await asyncio.sleep(0.1)
+        
+        try:
+            import torch
+            from transformers import AutoImageProcessor, AutoModel
+            from PIL import Image
+            import numpy as np
+            
+            processor = AutoImageProcessor.from_pretrained("facebook/dinov2-base")
+            model = AutoModel.from_pretrained("facebook/dinov2-base")
+            model.eval()
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'error': f'模型載入失敗: {str(e)}'})}\n\n"
+            return
+        
+        # 萃取特徵
+        yield f"event: status\ndata: {json.dumps({'message': '萃取圖片特徵...'})}\n\n"
+        await asyncio.sleep(0.1)
+        
+        try:
+            img = Image.open(img_path).convert('RGB')
+            img_resized = img.resize((224, 224))
+            inputs = processor(images=img_resized, return_tensors="pt")
+            
+            with torch.no_grad():
+                outputs = model(**inputs)
+                query_emb = outputs.last_hidden_state[:, 0, :].numpy().flatten()
+            
+            query_normalized = query_emb / np.linalg.norm(query_emb)
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'error': f'特徵萃取失敗: {str(e)}'})}\n\n"
+            return
+        
+        # 載入資料庫
+        yield f"event: status\ndata: {json.dumps({'message': '載入資料庫...'})}\n\n"
+        await asyncio.sleep(0.1)
+        
+        try:
+            import chromadb
+            client = chromadb.PersistentClient(path=os.path.join(base_dir, "data/chroma_public_art"))
+            collection = client.get_collection("public_art_dino_features")
+            items = collection.get(include=['embeddings', 'metadatas'])
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'error': f'資料庫載入失敗: {str(e)}'})}\n\n"
+            return
+        
+        # 計算相似度
+        results = []
+        total_approved = sum(1 for i in range(len(items['ids'])) if any(
+            approved_key in items['metadatas'][i].get('final_file', '') 
+            for approved_key in approved_keys
+        ))
+        processed = 0
+        
+        for i in range(len(items['ids'])):
+            work_id = items['ids'][i]
+            meta = items['metadatas'][i]
+            final_file = meta.get('final_file', '')
+            
+            is_approved = any(
+                approved_key in final_file or final_file.startswith(approved_key)
+                for approved_key in approved_keys
+            )
+            
+            if not is_approved:
+                continue
+            
+            processed += 1
+            
+            stored_emb = np.array(items['embeddings'][i])
+            stored_normalized = stored_emb / np.linalg.norm(stored_emb)
+            cos_sim = np.dot(query_normalized, stored_normalized)
+            similarity_pct = cos_sim * 100
+            
+            results.append({
+                'work_id': work_id,
+                'title': meta.get('title', work_id),
+                'artist': meta.get('artist', ''),
+                'year': meta.get('year', ''),
+                'location': meta.get('location', ''),
+                'material': meta.get('material', ''),
+                'cropped_file': final_file,
+                'similarity': round(similarity_pct, 1)
+            })
+            
+            # 發送進度
+            progress_data = json.dumps({
+                'current': processed,
+                'total': total_approved,
+                'current_title': meta.get('title', work_id)[:15]
+            })
+            yield f"event: progress\ndata: {progress_data}\n\n"
+            await asyncio.sleep(0.05)
+        
+        # 只保留相似度 >= 50% 的作品
+        high_match = [r for r in results if r['similarity'] >= 50]
+        high_match.sort(key=lambda x: x['similarity'], reverse=True)
+        
+        complete_data = json.dumps({
+            'success': True,
+            'total': len(results),
+            'matches': len(high_match),
+            'results': high_match
+        })
+        yield f"event: complete\ndata: {complete_data}\n\n"
+    
+    return StreamingResponse(
+        generate(), 
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 # =============================================================================
