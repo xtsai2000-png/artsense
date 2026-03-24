@@ -8,3 +8,4 @@ venv/
 # Data files (too large for Git)
 data/
 
+yolov8n.pt
