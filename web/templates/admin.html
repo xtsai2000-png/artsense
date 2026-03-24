@@ -516,8 +516,8 @@
             empty.style.display = 'none';
 
             list.innerHTML = filtered.map(item => `
-                <div class="pending-card" onclick="openCompare(${item.id})">
-                    <img src="/gallery-img/${item.cropped_file}" alt="${item.title}">
+                <div class="pending-card" role="button" tabindex="0" onclick="openCompare('${item.id}')" onkeydown="if(event.key==='Enter')openCompare('${item.id}')" style="cursor:pointer;">
+                    <img src="/gallery-img/${item.cropped_file}" alt="${item.title}" loading="lazy">
                     <div class="info">
                         <div class="title">${item.title}</div>
                         <div class="meta">${item.artist || '未知作者'} · ${item.year || '年代不詳'}</div>

@@ -147,6 +147,7 @@ async def home():
                     <li><a href="#about">關於</a></li>
                     <li><a href="#progress">進度</a></li>
                     <li><a href="#demo">展示</a></li>
+                    <li><a href="/admin" target="_blank">🔧 審核</a></li>
                 </ul>
             </div>
         </nav>
