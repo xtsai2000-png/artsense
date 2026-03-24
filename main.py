@@ -839,12 +839,131 @@ async def api_admin_reject(work_id: str):
 
 
 # =============================================================================
-# 相似度比對流程
+# 相似度比對流程（YOLO → SAM → DINOv2）
 # =============================================================================
 
 import shutil
 import uuid
+import asyncio
+import numpy as np
+from PIL import Image
+from pathlib import Path
 from fastapi import UploadFile
+
+# --- Global models (lazy load) ---
+_yolo_model = None
+_sam_predictor = None
+_model_lock = asyncio.Lock()
+
+
+def _get_yolo():
+    global _yolo_model
+    if _yolo_model is None:
+        from ultralytics import YOLO
+        _yolo_model = YOLO("yolov8n.pt")
+    return _yolo_model
+
+
+def _get_sam_predictor():
+    global _sam_predictor
+    if _sam_predictor is None:
+        from segment_anything import sam_model_registry, SamPredictor
+        cache = Path.home() / ".cache" / "torch" / "hub" / "facebook_sam_vit_b"
+        ckpt = cache / "sam_vit_b_01ec64.pth"
+        if not ckpt.exists():
+            cache.mkdir(parents=True, exist_ok=True)
+            import urllib.request
+            print("  ⬇ 下載 SAM ViT-B checkpoint...")
+            urllib.request.urlretrieve(
+                "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth", ckpt)
+        sam = sam_model_registry["vit_b"](checkpoint=str(ckpt))
+        sam.to("cpu").eval()
+        _sam_predictor = SamPredictor(sam)
+    return _sam_predictor
+
+
+def _run_yolo_sam_pipeline(orig_path: str, out_path: str) -> str:
+    """
+    同步執行 YOLO → SAM  pipeline。
+    - YOLO 偵測主體 bounding box
+    - 若偵測到：用 SAM 以 bbox 分割
+    - 若未偵測到：用 rembg 墌背後再以 SAM 強化
+    回傳處理後圖片路徑。
+    """
+    from rembg import remove
+
+    pil_raw = Image.open(orig_path).convert("RGB")
+    yolo_model = _get_yolo()
+    sam_pred = _get_sam_predictor()
+
+    # ── Step 1: YOLO 偵測 ──
+    boxes = yolo_model(orig_path, verbose=False)[0].boxes
+    yolo_box = None
+    if len(boxes) > 0:
+        best = max(boxes, key=lambda b: float(b.conf[0]))
+        conf = float(best.conf[0])
+        if conf >= 0.25:
+            x1, y1, x2, y2 = map(int, best.xyxy[0].tolist())
+            if (x2 - x1) >= 50 and (y2 - y1) >= 50:
+                yolo_box = (x1, y1, x2, y2)
+
+    # ── Step 2a: SAM 以 YOLO bbox 分割 ──
+    if yolo_box is not None:
+        img_np = np.array(pil_raw)
+        sam_pred.set_image(img_np)
+        mask, _, _ = sam_pred.predict(
+            point_coords=None, point_labels=None,
+            box=np.array([[yolo_box[0], yolo_box[1]],
+                         [yolo_box[2], yolo_box[3]]]),
+            multimask_output=False,
+        )
+        alpha = np.zeros(img_np.shape[:2], dtype=np.uint8)
+        alpha[mask[0]] = 255
+        rgba = np.dstack([img_np, alpha])
+        result = Image.fromarray(rgba).convert("RGBA")
+        result.save(out_path, "PNG")
+        return out_path
+
+    # ── Step 2b: rembg fallback → SAM 強化 ──
+    rembg_result = remove(pil_raw)
+    rembg_np = np.array(rembg_result)
+    if rembg_np.ndim == 2:
+        rembg_np = np.dstack([rembg_np, rembg_np, rembg_np,
+                              np.ones_like(rembg_np) * 255])
+    elif rembg_np.shape[2] == 3:
+        rembg_np = np.dstack([rembg_np, np.ones_like(rembg_np[:, :, 0]) * 255])
+
+    alpha = rembg_np[:, :, 3]
+    rows = np.any(alpha > 127, axis=1)
+    cols = np.any(alpha > 127, axis=0)
+    if np.any(rows) and np.any(cols):
+        y1, y2 = np.where(rows)[0][[0, -1]]
+        x1, x2 = np.where(cols)[0][[0, -1]]
+        pad = 20
+        y1, y2 = max(0, y1 - pad), min(alpha.shape[0], y2 + pad)
+        x1, x2 = max(0, x1 - pad), min(alpha.shape[1], x2 + pad)
+        crop = np.array(pil_raw)[y1:y2, x1:x2]
+        sam_pred.set_image(crop)
+        h, w = crop.shape[:2]
+        m, _, _ = sam_pred.predict(
+            point_coords=np.array([[w // 2, h // 2]]),
+            point_labels=np.array([1]),
+            multimask_output=True,
+        )
+        areas = [np.sum(mm) for mm in m]
+        best_idx = areas.index(max(areas))
+        full_mask = np.zeros(alpha.shape, dtype=np.uint8)
+        full_mask[y1:y2, x1:x2] = (m[best_idx] * 255).astype(np.uint8)
+        img_np = np.array(pil_raw.convert("RGB"))
+        rgba = np.dstack([img_np, full_mask])
+        result = Image.fromarray(rgba).convert("RGBA")
+        result.save(out_path, "PNG")
+    else:
+        # 完全失敗：用 rembg 原始結果
+        rembg_result.save(out_path, "PNG")
+
+    return out_path
+
 
 @app.get("/compare", response_class=HTMLResponse)
 async def compare_page():
@@ -856,37 +975,34 @@ async def compare_page():
 @app.post("/api/compare/upload")
 async def api_compare_upload(file: UploadFile, remove_bg: bool = True):
     """
-    上傳圖片並進行前處理
-    
+    上傳圖片並進行前處理（YOLO → SAM pipeline）
+
     1. 儲存原始圖片
-    2. 若 remove_bg=True，套用 rembg 去背
+    2. 若 remove_bg=True，執行 YOLO 偵測 + SAM 分割（rembg 為 fallback）
     3. 回傳 search_id 供後續使用
     """
     base_dir = os.path.dirname(os.path.abspath(__file__))
     temp_dir = os.path.join(base_dir, "data/temp_compare")
     os.makedirs(temp_dir, exist_ok=True)
-    
+
     search_id = str(uuid.uuid4())[:8]
     orig_path = os.path.join(temp_dir, f"{search_id}_orig.jpg")
-    
+
     # 儲存原始圖片
     with open(orig_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
-    
+
     processed_path = orig_path
     if remove_bg:
         try:
-            from rembg import remove
-            from PIL import Image
-            
-            img = Image.open(orig_path)
-            result = remove(img)
             processed_path = os.path.join(temp_dir, f"{search_id}_processed.png")
-            result.save(processed_path)
+            # 在執行緒中執行同步的 YOLO+SAM pipeline（避免封鎖 event loop）
+            await asyncio.to_thread(_run_yolo_sam_pipeline, str(orig_path), processed_path)
         except Exception as e:
-            # 如果去背失敗，使用原始圖片
+            print(f"[compare/upload] 處理失敗: {e}")
+            # 失敗時降回原始圖片
             processed_path = orig_path
-    
+
     return {
         "success": True,
         "search_id": search_id,

@@ -222,7 +222,10 @@
                 </div>
                 <div class="nobg-option">
                     <input type="checkbox" id="nobgCheck" checked>
-                    <label for="nobgCheck">✓ 自動去背（移除背景）</label>
+                    <label for="nobgCheck">✓ AI 前處理（YOLO + SAM 自動主體切割）</label>
+                </div>
+                <div style="text-align:center; color:#888; font-size:0.85rem; margin-top:0.25rem;">
+                    YOLO 偵測主體 → SAM 精細分割 → DINOv2 特徵萃取
                 </div>
                 <div class="btn-group">
                     <button class="btn btn-secondary" onclick="resetUpload()">重新上傳</button>
