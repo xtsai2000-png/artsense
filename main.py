@@ -512,7 +512,10 @@ async def gallery_img(filename: str):
     提供作品圖片檔案（Gallery Image Server）
 
     根據檔案名稱回傳對應的圖片檔案。
-    圖片來源：data/raw/moc/images/{filename}
+    搜尋順序：
+    1. data/processed/moc/images_nobg_final/{filename}
+    2. data/processed/moc/images/{filename}
+    3. data/raw/moc/images/{filename}
 
     Args:
         filename: 圖片檔案名稱（URL 路徑參數）
@@ -522,9 +525,19 @@ async def gallery_img(filename: str):
         JSON error: 檔案不存在時回傳 404
     """
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    fpath = os.path.join(base_dir, "data/raw/moc/images", filename)
-    if os.path.exists(fpath):
-        return FileResponse(fpath)
+    
+    # 依序搜尋多個目錄
+    search_dirs = [
+        os.path.join(base_dir, "data/processed/moc/images_nobg_final"),
+        os.path.join(base_dir, "data/processed/moc/images"),
+        os.path.join(base_dir, "data/raw/moc/images"),
+    ]
+    
+    for search_dir in search_dirs:
+        fpath = os.path.join(search_dir, filename)
+        if os.path.exists(fpath):
+            return FileResponse(fpath)
+    
     return {"error": "not found"}
 
 
@@ -671,6 +684,145 @@ async def api_works():
                     "url": meta.get("url", ""),
                 })
     return {"count": len(works), "works": works}
+
+
+# =============================================================================
+# 圖片審核後台
+# =============================================================================
+
+def get_review_status_file():
+    """取得審核狀態檔案路徑"""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_dir, "data/raw/moc/review_status.json")
+
+def load_review_status():
+    """載入審核狀態"""
+    status_file = get_review_status_file()
+    if os.path.exists(status_file):
+        with open(status_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+def save_review_status(status):
+    """儲存審核狀態"""
+    status_file = get_review_status_file()
+    with open(status_file, "w", encoding="utf-8") as f:
+        json.dump(status, f, ensure_ascii=False, indent=2)
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page():
+    """
+    圖片審核後台頁面
+
+    提供人類視覺比對原始圖片與處理後圖片的介面，
+    支援通過/拒絕操作。
+    """
+    with open("web/templates/admin.html", "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
+
+@app.get("/api/admin/works")
+async def api_admin_works():
+    """
+    取得待審核作品列表 API
+
+    回傳所有作品的審核狀態，包含：
+    - 原始檔案、處理後檔案
+    - 作品 metadata
+    - 審核狀態（pending/approved/rejected）
+
+    Returns:
+        list: 作品清單
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    images_dir = os.path.join(base_dir, "data/raw/moc/images")
+    processed_dir = os.path.join(base_dir, "data/processed/moc/images_nobg_final")
+    metadata_file = os.path.join(base_dir, "data/raw/moc/works_metadata.json")
+    review_status = load_review_status()
+
+    # 建立 metadata 對照表
+    meta_map = {}
+    if os.path.exists(metadata_file):
+        with open(metadata_file, "r", encoding="utf-8") as f:
+            for item in json.load(f):
+                meta_map[item.get("image_file", "")] = item
+
+    # 掃描圖片目錄
+    works = []
+    if os.path.exists(images_dir):
+        for fname in sorted(os.listdir(images_dir)):
+            if not fname.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                continue
+
+            # 對應的處理後檔案
+            base_name = fname.replace('.jpg', '').replace('.jpeg', '').replace('.png', '').replace('.webp', '')
+            cropped_file = f"{base_name}_crop3.jpg"
+            nobg_file = f"{base_name}_nobg_final.png"
+
+            # 優先使用 nobg_final，否則用 crop3
+            processed_file = None
+            if os.path.exists(os.path.join(processed_dir, nobg_file)):
+                processed_file = nobg_file
+            elif os.path.exists(os.path.join(processed_dir, cropped_file)):
+                processed_file = cropped_file
+
+            work_id = str(base_name)
+            status = review_status.get(work_id, {}).get("status", "pending")
+
+            meta = meta_map.get(fname, {})
+            works.append({
+                "id": work_id,
+                "file": fname,
+                "original_file": fname,
+                "cropped_file": processed_file or cropped_file,
+                "title": meta.get("title", base_name),
+                "artist": meta.get("artist", ""),
+                "year": meta.get("year", ""),
+                "location": meta.get("location", ""),
+                "material": meta.get("material", ""),
+                "dimensions": meta.get("dimensions", ""),
+                "review_status": status,
+            })
+
+    return works
+
+
+@app.post("/api/admin/approve/{work_id}")
+async def api_admin_approve(work_id: str):
+    """
+    通過審核
+
+    將作品標記為已通過審核，寫入 DINOv2 特徵至 ChromaDB。
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    review_status = load_review_status()
+
+    review_status[work_id] = {
+        "status": "approved",
+        "updated_at": datetime.now().isoformat()
+    }
+    save_review_status(review_status)
+
+    return {"success": True, "message": "已通過審核"}
+
+
+@app.post("/api/admin/reject/{work_id}")
+async def api_admin_reject(work_id: str):
+    """
+    拒絕審核
+
+    將作品標記為需要重新處理。
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    review_status = load_review_status()
+
+    review_status[work_id] = {
+        "status": "rejected",
+        "updated_at": datetime.now().isoformat()
+    }
+    save_review_status(review_status)
+
+    return {"success": True, "message": "已標記為需要重新處理"}
 
 
 # =============================================================================

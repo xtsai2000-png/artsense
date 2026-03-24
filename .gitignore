@@ -4,3 +4,7 @@ __pycache__/
 venv/
 *.egg-info/
 .env
+
+# Data files (too large for Git)
+data/
+
