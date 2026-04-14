@@ -77,6 +77,7 @@ def search_by_image(
     回傳相似度高於 thresh 的結果，依相似度降序排列。
     """
     from src.image_pipeline import extract_features_single
+    from sklearn.preprocessing import normalize
 
     thresh = thresh or get_similarity_thresh()
 
@@ -84,8 +85,11 @@ def search_by_image(
     if embedding is None:
         return []
 
-    compressed = compress_vector(embedding)
-    return _query_chroma(base_dir, compressed.tolist(), limit, thresh)
+    # L2 正規化（與 ChromaDB 內部向量一致）
+    embedding = normalize(embedding.reshape(1, -1)).flatten()
+
+    # 查詢 DINO collection（768維）而非 public_art_works（4096維）
+    return _query_chroma(base_dir, embedding.tolist(), limit, thresh, use_dino_collection=True)
 
 
 # =============================================================================
@@ -130,9 +134,18 @@ def _query_chroma(
     embedding: list,
     limit: int,
     thresh: float,
+    use_dino_collection: bool = False,
 ) -> list[dict]:
     """底層查詢 ChromaDB，過濾低於閾值的結果"""
-    collection = get_chroma(base_dir)
+    import chromadb
+    chroma_path = os.path.join(base_dir, "data", "chroma_public_art")
+    client = chromadb.PersistentClient(path=chroma_path)
+
+    if use_dino_collection:
+        collection = client.get_collection("public_art_dino_features")
+    else:
+        collection = get_chroma(base_dir)
+
     if collection.count() == 0:
         return []
 
