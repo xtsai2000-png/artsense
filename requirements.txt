@@ -1,19 +1,27 @@
-# Artsense MVP 所需套件
+# Artsense v2 所需套件
 # 安裝：pip install -r requirements.txt
 
 # 向量資料庫
 chromadb>=0.4.0
-faiss-cpu>=1.7.0          # 或 faiss-gpu (GPU 版本)
+faiss-cpu>=1.7.0
 
 # AI 模型
-sentence-transformers>=2.2.0  # DINOv2 / CLIP 模型
 torch>=2.0.0
 torchvision>=0.15.0
+sentence-transformers>=2.2.0
 
-# 圖片分割（新增）
+# 圖片分割
 ultralytics>=8.0.0            # YOLOv8
-segment-anything>=1.0.0       # SAM ViT-B
-rembg>=2.0.50                 # U2-Net 去背（fallback）
+mobile-sam>=1.0.0             # MobileSAM（速度 5x）
+segment-anything>=1.0.0       # SAM ViT-B（fallback）
+rembg>=2.0.50                 # U2-Net 去背
+
+# 圖片品質過濾
+opencv-python>=4.8.0          # Laplacian 模糊偵測
+imagehash>=4.3.1              # pHash 感知雜湊去重
+
+# 向量壓縮
+scikit-learn>=1.3.0           # PCA
 
 # 爬蟲
 scrapling>=0.1.0
@@ -25,7 +33,7 @@ playwright>=1.40.0
 fastapi>=0.100.0
 uvicorn>=0.23.0
 pydantic>=2.0.0
-httpx>=0.24.0                 # Ollama API 呼叫（新增）
+httpx>=0.24.0
 
 # 報告生成
 reportlab>=4.0.0
