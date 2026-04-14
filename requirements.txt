@@ -3,12 +3,17 @@
 
 # 向量資料庫
 chromadb>=0.4.0
-faiss-cpu>=1.7.0  # 或 faiss-gpu (GPU 版本)
+faiss-cpu>=1.7.0          # 或 faiss-gpu (GPU 版本)
 
 # AI 模型
 sentence-transformers>=2.2.0  # DINOv2 / CLIP 模型
-torch>=2.0.0  # PyTorch
+torch>=2.0.0
 torchvision>=0.15.0
+
+# 圖片分割（新增）
+ultralytics>=8.0.0            # YOLOv8
+segment-anything>=1.0.0       # SAM ViT-B
+rembg>=2.0.50                 # U2-Net 去背（fallback）
 
 # 爬蟲
 scrapling>=0.1.0
@@ -20,6 +25,7 @@ playwright>=1.40.0
 fastapi>=0.100.0
 uvicorn>=0.23.0
 pydantic>=2.0.0
+httpx>=0.24.0                 # Ollama API 呼叫（新增）
 
 # 報告生成
 reportlab>=4.0.0
