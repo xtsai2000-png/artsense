@@ -933,12 +933,6 @@ async def api_compare_search(search_id: str):
         return {"error": "Image not found"}
     
     async def generate():
-        # 讀取審核狀態
-        status_file = os.path.join(base_dir, "data/raw/moc/review_status.json")
-        with open(status_file, "r", encoding="utf-8") as f:
-            status_data = json.load(f)
-        approved_keys = {k for k, v in status_data.items() if v.get("status") == "approved"}
-        
         # 載入 DINOv2
         yield f"event: status\ndata: {json.dumps({'message': '載入 DINOv2 模型...'})}\n\n"
         await asyncio.sleep(0.1)
@@ -987,33 +981,23 @@ async def api_compare_search(search_id: str):
             yield f"event: error\ndata: {json.dumps({'error': f'資料庫載入失敗: {str(e)}'})}\n\n"
             return
         
-        # 計算相似度
+        # 計算相似度（所有作品，不過濾審核狀態）
         results = []
-        total_approved = sum(1 for i in range(len(items['ids'])) if any(
-            approved_key in items['metadatas'][i].get('final_file', '') 
-            for approved_key in approved_keys
-        ))
-        processed = 0
+        total_items = len(items['ids'])
         
-        for i in range(len(items['ids'])):
+        for i in range(total_items):
             work_id = items['ids'][i]
             meta = items['metadatas'][i]
             final_file = meta.get('final_file', '')
             
-            is_approved = any(
-                approved_key in final_file or final_file.startswith(approved_key)
-                for approved_key in approved_keys
-            )
-            
-            if not is_approved:
-                continue
-            
-            processed += 1
-            
             stored_emb = np.array(items['embeddings'][i])
-            stored_normalized = stored_emb / np.linalg.norm(stored_emb)
-            cos_sim = np.dot(query_normalized, stored_normalized)
-            similarity_pct = cos_sim * 100
+            stored_norm = np.linalg.norm(stored_emb)
+            if stored_norm > 0:
+                stored_normalized = stored_emb / stored_norm
+                cos_sim = np.dot(query_normalized, stored_normalized)
+                similarity_pct = cos_sim * 100
+            else:
+                similarity_pct = 0
             
             results.append({
                 'work_id': work_id,
@@ -1028,15 +1012,15 @@ async def api_compare_search(search_id: str):
             
             # 發送進度
             progress_data = json.dumps({
-                'current': processed,
-                'total': total_approved,
+                'current': i + 1,
+                'total': total_items,
                 'current_title': meta.get('title', work_id)[:15]
             })
             yield f"event: progress\ndata: {progress_data}\n\n"
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.02)
         
-        # 只保留相似度 >= 50% 的作品
-        high_match = [r for r in results if r['similarity'] >= 50]
+        # 只保留相似度 >= 25% 的作品
+        high_match = [r for r in results if r['similarity'] >= 25]
         high_match.sort(key=lambda x: x['similarity'], reverse=True)
         
         complete_data = json.dumps({
