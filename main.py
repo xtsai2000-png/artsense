@@ -1038,7 +1038,9 @@ async def api_compare_search(search_id: str):
             'success': True,
             'total': len(results),
             'matches': len(high_match),
-            'results': high_match
+            'results': high_match,
+            'query_image': img_path,
+            'search_id': search_id
         })
         yield f"event: complete\ndata: {complete_data}\n\n"
     
