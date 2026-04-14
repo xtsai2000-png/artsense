@@ -432,6 +432,42 @@ async def api_compare_img(filename: str):
         return FileResponse(fpath)
     return JSONResponse({"error": "not found"}, status_code=404)
 
+@app.get("/api/compare/image/{search_id}")
+async def api_compare_image(search_id: str):
+    """取得處理後的圖片（向後相容）"""
+    processed_path = os.path.join(BASE_DIR, "data/temp_compare", f"{search_id}_processed.png")
+    if os.path.exists(processed_path):
+        return FileResponse(processed_path)
+    orig_path = os.path.join(BASE_DIR, "data/temp_compare", f"{search_id}_orig.jpg")
+    if os.path.exists(orig_path):
+        return FileResponse(orig_path)
+    return JSONResponse({"error": "Image not found"}, status_code=404)
+
+@app.get("/api/compare/search/{search_id}")
+async def api_compare_search(search_id: str):
+    """對處理過的圖片進行相似度比對（SSE）"""
+    from fastapi.responses import StreamingResponse
+    import asyncio
+
+    processed_path = os.path.join(BASE_DIR, "data/temp_compare", f"{search_id}_processed.png")
+    orig_path = os.path.join(BASE_DIR, "data/temp_compare", f"{search_id}_orig.jpg")
+    img_path = processed_path if os.path.exists(processed_path) else orig_path
+
+    if not os.path.exists(img_path):
+        return JSONResponse({"error": "Image not found"}, status_code=404)
+
+    async def generate():
+        try:
+            from src.search import search_by_image
+            yield f"event: status\ndata: {{\"message\": \"處理中...\"}}\n\n"
+            await asyncio.sleep(0.1)
+            results = search_by_image(img_path, BASE_DIR, limit=10)
+            yield f"event: result\ndata: {json.dumps(results)}\n\n"
+        except Exception as e:
+            yield f"event: error\ndata: {{\"error\": \"{e}\"}}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
 # =============================================================================
 # 回饋迴圈
 # =============================================================================
