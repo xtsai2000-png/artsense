@@ -1019,8 +1019,8 @@ async def api_compare_search(search_id: str):
             yield f"event: progress\ndata: {progress_data}\n\n"
             await asyncio.sleep(0.02)
         
-        # 只保留相似度 >= 25% 的作品
-        high_match = [r for r in results if r['similarity'] >= 25]
+        # 只保留相似度 >= 50% 的作品
+        high_match = [r for r in results if r['similarity'] >= 50]
         high_match.sort(key=lambda x: x['similarity'], reverse=True)
         
         complete_data = json.dumps({
