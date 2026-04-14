@@ -550,7 +550,18 @@ async def gallery_img(filename: str):
         fpath = os.path.join(search_dir, filename)
         if os.path.exists(fpath):
             return FileResponse(fpath)
-    
+
+    # Fallback: filename 可能是 nobg_final.png → 試找 _crop3.jpg, _crop2.jpg, _crop.jpg
+    parts = filename.rsplit(".", 1)
+    if len(parts) == 2:
+        base, ext = parts
+        work_base = base.split("_crop")[0].split("_nobg")[0]
+        for suffix in ["_crop3.jpg", "_crop2.jpg", "_crop.jpg", "_nobg_final.png"]:
+            fallback_name = f"{work_base}{suffix}"
+            fallback_path = os.path.join(search_dirs[0], fallback_name)
+            if os.path.exists(fallback_path):
+                return FileResponse(fallback_path)
+
     return {"error": "not found"}
 
 
