@@ -153,6 +153,44 @@
         }
         .stats-bar .stat { display: flex; align-items: center; gap: 0.5rem; }
         .stats-bar .num { font-weight: 700; color: #667eea; font-size: 1.25rem; }
+
+        /* 左右對照 layout */
+        .compare-layout {
+            display: grid;
+            grid-template-columns: 260px 1fr;
+            gap: 1.5rem;
+            align-items: start;
+        }
+        .compare-query-panel {
+            position: sticky;
+            top: 1rem;
+            background: #f8f9ff;
+            border-radius: 12px;
+            padding: 1rem;
+            border: 2px solid #667eea;
+        }
+        .compare-query-label {
+            text-align: center;
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: #667eea;
+            margin-bottom: 0.75rem;
+        }
+        .compare-query-panel img {
+            width: 100%;
+            border-radius: 8px;
+            object-fit: contain;
+        }
+        .compare-results-panel { min-width: 0; }
+        .compare-results-panel .stats-bar {
+            margin-bottom: 1rem;
+        }
+        .compare-results-panel .stats-bar .num { font-size: 1.1rem; }
+
+        @media (max-width: 700px) {
+            .compare-layout { grid-template-columns: 1fr; }
+            .compare-query-panel { position: static; }
+        }
         
         .loading {
             text-align: center;
@@ -258,19 +296,29 @@
                     <span class="step-num">4</span>
                     比對結果
                 </div>
-                <div class="stats-bar" id="resultStats">
-                    <div class="stat">
-                        <span>比對資料庫：</span>
-                        <span class="num" id="totalCount">-</span>
-                        <span>筆</span>
+                <div class="compare-layout" id="compareLayout">
+                    <!-- 左側：上傳的圖 -->
+                    <div class="compare-query-panel">
+                        <div class="compare-query-label">📷 你的圖片</div>
+                        <img id="compareQueryImg" src="" alt="query">
                     </div>
-                    <div class="stat">
-                        <span>相似度 ≥50%：</span>
-                        <span class="num" id="matchCount">-</span>
-                        <span>筆</span>
+                    <!-- 右側：結果列表 -->
+                    <div class="compare-results-panel">
+                        <div class="stats-bar" id="resultStats">
+                            <div class="stat">
+                                <span>比對資料庫：</span>
+                                <span class="num" id="totalCount">-</span>
+                                <span>筆</span>
+                            </div>
+                            <div class="stat">
+                                <span>相似度 ≥25%：</span>
+                                <span class="num" id="matchCount">-</span>
+                                <span>筆</span>
+                            </div>
+                        </div>
+                        <div id="resultsList"></div>
                     </div>
                 </div>
-                <div id="resultsList"></div>
             </div>
         </div>
 
@@ -480,11 +528,22 @@
             document.getElementById('totalCount').textContent = data.total || 0;
             document.getElementById('matchCount').textContent = data.matches || 0;
 
+            // 顯示左側上傳圖
+            const queryImg = document.getElementById('compareQueryImg');
+            if (queryImg && data.query_image) {
+                // query_image 是絕對路徑，通過 /api/compare/image 取得 blob
+                fetch(`/api/compare/image/${data.search_id}`)
+                    .then(r => r.blob())
+                    .then(blob => {
+                        queryImg.src = URL.createObjectURL(blob);
+                    });
+            }
+
             const resultsList = document.getElementById('resultsList');
             resultsList.innerHTML = '';
 
             if (data.results.length === 0) {
-                resultsList.innerHTML = '<p style="text-align:center; color:#666; padding:2rem;">沒有找到相似作品（相似度皆 < 50%）</p>';
+                resultsList.innerHTML = '<p style="text-align:center; color:#666; padding:2rem;">沒有找到相似作品（相似度皆 < 25%）</p>';
             } else {
                 data.results.forEach(item => {
                     const isHigh = item.similarity >= 50;
