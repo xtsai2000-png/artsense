@@ -154,37 +154,80 @@
         .stats-bar .stat { display: flex; align-items: center; gap: 0.5rem; }
         .stats-bar .num { font-weight: 700; color: #667eea; font-size: 1.25rem; }
 
-        /* 左右對照 layout */
-        .compare-layout {
+        /* 每筆結果：圖片對照列 + 文字資訊卡 */
+        .result-item { margin-bottom: 2rem; }
+        .result-images-row {
             display: grid;
-            grid-template-columns: 260px 1fr;
-            gap: 1.5rem;
-            align-items: start;
-        }
-        .compare-query-panel {
-            position: sticky;
-            top: 1rem;
-            background: #f8f9ff;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+            background: #f8f9fa;
             border-radius: 12px;
-            padding: 1rem;
+            padding: 0.75rem;
             border: 2px solid #667eea;
         }
-        .compare-query-label {
-            text-align: center;
-            font-weight: 600;
-            font-size: 0.9rem;
-            color: #667eea;
-            margin-bottom: 0.75rem;
-        }
-        .compare-query-panel img {
-            width: 100%;
+        .result-images-row .img-cell {
+            background: white;
             border-radius: 8px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .result-images-row .img-cell img {
+            width: 100%;
+            height: 200px;
             object-fit: contain;
         }
-        .compare-results-panel { min-width: 0; }
-        .compare-results-panel .stats-bar {
-            margin-bottom: 1rem;
+        .result-images-row .img-label {
+            font-size: 0.78rem;
+            color: #667eea;
+            font-weight: 600;
+            padding: 0.4rem 0;
+            text-align: center;
         }
+        .result-images-row.high-match {
+            border-color: #28a745;
+        }
+        .result-images-row .similarity-badge {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #28a745;
+            text-align: center;
+            padding: 0.25rem 0;
+        }
+        .result-info-card {
+            background: white;
+            border-radius: 10px;
+            padding: 0.85rem 1.2rem;
+            margin-top: 0.5rem;
+            border: 1px solid #e9ecef;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+        .result-info-card .result-title {
+            font-weight: 600;
+            font-size: 1rem;
+            color: #333;
+        }
+        .result-info-card .result-meta {
+            font-size: 0.85rem;
+            color: #666;
+        }
+        .result-info-card .result-meta span { margin-right: 1rem; }
+        .result-info-card .similarity-num {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: #28a745;
+        }
+        .result-info-card.high-match { border-color: #28a745; }
+
+        .compare-layout { display: none; }
+        .compare-query-panel { display: none; }
+        .compare-results-panel { display: none; }
+        .compare-results-panel .stats-bar { display: none; }
         .compare-results-panel .stats-bar .num { font-size: 1.1rem; }
 
         @media (max-width: 700px) {
@@ -296,29 +339,19 @@
                     <span class="step-num">4</span>
                     比對結果
                 </div>
-                <div class="compare-layout" id="compareLayout">
-                    <!-- 左側：上傳的圖 -->
-                    <div class="compare-query-panel">
-                        <div class="compare-query-label">📷 你的圖片</div>
-                        <img id="compareQueryImg" src="" alt="query">
+                <div class="stats-bar" id="resultStats">
+                    <div class="stat">
+                        <span>比對資料庫：</span>
+                        <span class="num" id="totalCount">-</span>
+                        <span>筆</span>
                     </div>
-                    <!-- 右側：結果列表 -->
-                    <div class="compare-results-panel">
-                        <div class="stats-bar" id="resultStats">
-                            <div class="stat">
-                                <span>比對資料庫：</span>
-                                <span class="num" id="totalCount">-</span>
-                                <span>筆</span>
-                            </div>
-                            <div class="stat">
-                                <span>相似度 ≥25%：</span>
-                                <span class="num" id="matchCount">-</span>
-                                <span>筆</span>
-                            </div>
-                        </div>
-                        <div id="resultsList"></div>
+                    <div class="stat">
+                        <span>相似度 ≥25%：</span>
+                        <span class="num" id="matchCount">-</span>
+                        <span>筆</span>
                     </div>
                 </div>
+                <div id="resultsList"></div>
             </div>
         </div>
 
@@ -528,40 +561,60 @@
             document.getElementById('totalCount').textContent = data.total || 0;
             document.getElementById('matchCount').textContent = data.matches || 0;
 
-            // 顯示左側上傳圖
-            const queryImg = document.getElementById('compareQueryImg');
-            if (queryImg && data.query_image) {
-                // query_image 是絕對路徑，通過 /api/compare/image 取得 blob
-                fetch(`/api/compare/image/${data.search_id}`)
-                    .then(r => r.blob())
-                    .then(blob => {
-                        queryImg.src = URL.createObjectURL(blob);
-                    });
-            }
-
             const resultsList = document.getElementById('resultsList');
             resultsList.innerHTML = '';
 
             if (data.results.length === 0) {
                 resultsList.innerHTML = '<p style="text-align:center; color:#666; padding:2rem;">沒有找到相似作品（相似度皆 < 25%）</p>';
-            } else {
-                data.results.forEach(item => {
-                    const isHigh = item.similarity >= 50;
-                    const card = document.createElement('div');
-                    card.className = 'result-card' + (isHigh ? ' high-match' : '');
-                    card.innerHTML = `
-                        <img class="thumb" src="/gallery-img/${item.cropped_file}" alt="${item.title}">
-                        <div class="info">
-                            <div class="title">${item.title}${isHigh ? '<span class="result-badge">高度相似</span>' : ''}</div>
-                            <div class="meta">作者：${item.artist || '未知'}</div>
-                            <div class="meta">年代：${item.year || '未知'}</div>
-                            <div class="meta">地點：${item.location || '未知'}</div>
-                        </div>
-                        <div class="similarity ${isHigh ? 'high' : ''}">${item.similarity.toFixed(1)}%</div>
-                    `;
-                    resultsList.appendChild(card);
-                });
+                return;
             }
+
+            // 預先載入 query image（所有結果共用同一張）
+            let queryImgUrl = null;
+            if (data.search_id) {
+                fetch(`/api/compare/image/${data.search_id}`)
+                    .then(r => r.blob())
+                    .then(blob => {
+                        queryImgUrl = URL.createObjectURL(blob);
+                        // 所有 result-item 都用同一張 query 圖
+                        document.querySelectorAll('.result-query-img').forEach(img => {
+                            img.src = queryImgUrl;
+                        });
+                    });
+            }
+
+            data.results.forEach(item => {
+                const isHigh = item.similarity >= 50;
+                const rowClass = isHigh ? 'result-images-row high-match' : 'result-images-row';
+                const infoClass = isHigh ? 'result-info-card high-match' : 'result-info-card';
+
+                const itemEl = document.createElement('div');
+                itemEl.className = 'result-item';
+                itemEl.innerHTML = `
+                    <div class="${rowClass}">
+                        <div class="img-cell">
+                            <img class="result-query-img" src="" alt="你的圖片">
+                            <div class="img-label">📷 你的圖片</div>
+                        </div>
+                        <div class="img-cell">
+                            <img class="thumb" src="/gallery-img/${item.cropped_file}" alt="${item.title}">
+                            <div class="img-label">🔍 ${item.title}</div>
+                        </div>
+                    </div>
+                    <div class="${infoClass}">
+                        <div>
+                            <div class="result-title">${item.title}</div>
+                            <div class="result-meta">
+                                <span>作者：${item.artist || '未知'}</span>
+                                <span>年代：${item.year || '未知'}</span>
+                                <span>地點：${item.location || '未知'}</span>
+                            </div>
+                        </div>
+                        <div class="similarity-num">${item.similarity.toFixed(1)}%</div>
+                    </div>
+                `;
+                resultsList.appendChild(itemEl);
+            });
         }
 
         function showToast(message, type) {
