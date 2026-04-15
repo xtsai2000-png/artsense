@@ -1018,6 +1018,14 @@ async def api_compare_search(search_id: str):
             else:
                 similarity_pct = 0
             
+            # 聰明找圖檔：用 work_id 推測可能的檔名（避免 cropped_file 為空的問題）
+            nobg_candidate = f"{work_id}_nobg_final.png"
+            crop_candidate = f"{work_id}_crop3.jpg"
+            # 優先嘗試 nobg_final，其次 crop3
+            cropped_file = nobg_candidate if os.path.exists(os.path.join(processed_dir, nobg_candidate)) else \
+                          crop_candidate if os.path.exists(os.path.join(processed_dir, crop_candidate)) else \
+                          final_file if final_file else ''
+
             results.append({
                 'work_id': work_id,
                 'title': meta.get('title', work_id),
@@ -1025,7 +1033,7 @@ async def api_compare_search(search_id: str):
                 'year': meta.get('year', ''),
                 'location': meta.get('location', ''),
                 'material': meta.get('material', ''),
-                'cropped_file': final_file,
+                'cropped_file': cropped_file,
                 'similarity': round(similarity_pct, 1)
             })
             
@@ -1038,8 +1046,8 @@ async def api_compare_search(search_id: str):
             yield f"event: progress\ndata: {progress_data}\n\n"
             await asyncio.sleep(0.02)
         
-        # 只保留相似度 >= 50% 的作品
-        high_match = [r for r in results if r['similarity'] >= 50]
+        # 只保留相似度 >= 25% 的作品
+        high_match = [r for r in results if r['similarity'] >= 25]
         high_match.sort(key=lambda x: x['similarity'], reverse=True)
         
         complete_data = json.dumps({
