@@ -552,7 +552,7 @@ async def gallery_img(filename: str):
             return FileResponse(fpath)
 
     # Fallback: filename 可能是 nobg_final.png → 試找 _crop3.jpg, _crop2.jpg, _crop.jpg
-    parts = filename.rsplit(".", 1)
+    parts = filename_decoded.rsplit(".", 1)
     if len(parts) == 2:
         base, ext = parts
         work_base = base.split("_crop")[0].split("_nobg")[0]
@@ -938,7 +938,7 @@ async def api_compare_search(search_id: str):
     
     processed_path = os.path.join(temp_dir, f"{search_id}_processed.png")
     orig_path = os.path.join(temp_dir, f"{search_id}_orig.jpg")
-    img_path = processed_path if os.path.exists(processed_path) else orig_path
+    img_path = processed_path if os.path.exists(processed_path) else orig_path if os.path.exists(orig_path) else upload_path if os.path.exists(upload_path) else None
     
     if not os.path.exists(img_path):
         return {"error": "Image not found"}
