@@ -551,16 +551,24 @@ async def gallery_img(filename: str):
         if os.path.exists(fpath):
             return FileResponse(fpath)
 
-    # Fallback: filename 可能是 nobg_final.png → 試找 _crop3.jpg, _crop2.jpg, _crop.jpg
+    # Fallback: 嘗試找同作品 ID 的任何圖檔
     parts = filename_decoded.rsplit(".", 1)
     if len(parts) == 2:
         base, ext = parts
-        work_base = base.split("_crop")[0].split("_nobg")[0]
-        for suffix in ["_crop3.jpg", "_crop2.jpg", "_crop.jpg", "_nobg_final.png"]:
-            fallback_name = f"{work_base}{suffix}"
-            fallback_path = os.path.join(search_dirs[0], fallback_name)
-            if os.path.exists(fallback_path):
-                return FileResponse(fallback_path)
+        # 抽出作品 ID（第一段底線之前）
+        work_id = base.split("_")[0] if "_" in base else base
+        for suffix in ["_nobg_final.png", "_crop3.jpg", "_crop2.jpg", "_crop.jpg"]:
+            fallback_name = f"{work_id}{suffix}"
+            for search_dir in search_dirs:
+                fallback_path = os.path.join(search_dir, fallback_name)
+                if os.path.exists(fallback_path):
+                    return FileResponse(fallback_path)
+        # 最後：搜尋所有包含 work_id 的圖檔
+        for search_dir in search_dirs:
+            if os.path.exists(search_dir):
+                for fname in os.listdir(search_dir):
+                    if fname.startswith(work_id) and fname.lower().endswith(('.jpg', '.png', '.jpeg')):
+                        return FileResponse(os.path.join(search_dir, fname))
 
     return {"error": "not found"}
 
