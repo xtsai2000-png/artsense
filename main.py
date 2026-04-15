@@ -943,6 +943,7 @@ async def api_compare_search(search_id: str):
     
     base_dir = os.path.dirname(os.path.abspath(__file__))
     temp_dir = os.path.join(base_dir, "data/temp_compare")
+    processed_dir = os.path.join(base_dir, "data/processed/moc/images_nobg_final")
     
     processed_path = os.path.join(temp_dir, f"{search_id}_processed.png")
     orig_path = os.path.join(temp_dir, f"{search_id}_orig.jpg")
