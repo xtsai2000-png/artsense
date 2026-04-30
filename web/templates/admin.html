@@ -615,8 +615,7 @@
 
                 showToast('已刪除', 'success');
                 closeModal();
-                updateStats();
-                renderItems();
+                loadItems(); // 重新 fetch API 確保資料一致
             } catch (err) {
                 showToast('刪除失敗: ' + err.message, 'error');
             }
