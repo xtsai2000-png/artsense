@@ -820,6 +820,45 @@ async def api_admin_works():
     return works
 
 
+    # ── 加入 reprocess 產生的多版本項目（base_id_2, base_id_3...） ──
+    existing_ids = {w["id"] for w in works}
+    if os.path.exists(processed_dir):
+        for fname in sorted(os.listdir(processed_dir)):
+            if not fname.lower().endswith('.png') or '_nobg_final' not in fname:
+                continue
+            work_id = fname.replace('_nobg_final.png', '')
+            parts = work_id.rsplit('_', 1)
+            if len(parts) != 2 or not parts[1].isdigit():
+                continue
+            if work_id in existing_ids:
+                continue
+
+            root_id = parts[0]
+            orig_files = [f for f in os.listdir(images_dir)
+                          if f.startswith(root_id + '.') or f.startswith(root_id + '_')
+                          and f.lower().endswith(('.jpg','.jpeg','.png','.webp'))]
+            original_file = orig_files[0] if orig_files else root_id + '.jpg'
+
+            meta = meta_map.get(original_file, {})
+            status = review_status.get(work_id, {}).get("status", "pending")
+            works.append({
+                "id": work_id,
+                "file": original_file,
+                "original_file": original_file,
+                "cropped_file": fname,
+                "title": f"{meta.get('title', root_id)} (v{parts[1]})",
+                "artist": meta.get("artist", ""),
+                "year": meta.get("year", ""),
+                "location": meta.get("location", ""),
+                "material": meta.get("material", ""),
+                "dimensions": meta.get("dimensions", ""),
+                "review_status": status,
+            })
+            existing_ids.add(work_id)
+
+    return works
+
+
 @app.post("/api/admin/approve/{work_id}")
 async def api_admin_approve(work_id: str):
     """
