@@ -817,42 +817,6 @@ async def api_admin_works():
                 "review_status": status,
             })
 
-    # ── 加入 reprocess 產生的多版本項目（base_id_2, base_id_3...） ──
-    existing_ids = {w["id"] for w in works}
-    if os.path.exists(processed_dir):
-        for fname in sorted(os.listdir(processed_dir)):
-            if not fname.lower().endswith('.png') or '_nobg_final' not in fname:
-                continue
-            work_id = fname.replace('_nobg_final.png', '')
-            parts = work_id.rsplit('_', 1)
-            if len(parts) != 2 or not parts[1].isdigit():
-                continue
-            if work_id in existing_ids:
-                continue
-
-            root_id = parts[0]
-            orig_files = [f for f in os.listdir(images_dir)
-                          if f.startswith(root_id + '.') or f.startswith(root_id + '_')
-                          and f.lower().endswith(('.jpg','.jpeg','.png','.webp'))]
-            original_file = orig_files[0] if orig_files else root_id + '.jpg'
-
-            meta = meta_map.get(original_file, {})
-            status = review_status.get(work_id, {}).get("status", "pending")
-            works.append({
-                "id": work_id,
-                "file": original_file,
-                "original_file": original_file,
-                "cropped_file": fname,
-                "title": f"{meta.get('title', root_id)} (v{parts[1]})",
-                "artist": meta.get("artist", ""),
-                "year": meta.get("year", ""),
-                "location": meta.get("location", ""),
-                "material": meta.get("material", ""),
-                "dimensions": meta.get("dimensions", ""),
-                "review_status": status,
-            })
-            existing_ids.add(work_id)
-
     return works
 
 
@@ -869,33 +833,21 @@ async def api_admin_approve(work_id: str):
     base_dir = os.path.dirname(os.path.abspath(__file__))
     review_status = load_review_status()
 
-    # 解析 root_id
+    # 解析 base_id（去掉 _2, _3 等 suffix）
     parts = work_id.rsplit("_", 1)
-    if len(parts) == 2 and parts[1].isdigit():
-        root_id = parts[0]
-    else:
-        root_id = work_id
+    base_id = parts[0] if len(parts) == 2 and parts[1].isdigit() else work_id
 
     # 標記 status
-    entry = review_status.get(work_id, {})
+    entry = review_status.get(base_id, {})
     entry["status"] = "approved"
     entry["updated_at"] = datetime.now().isoformat()
-    review_status[work_id] = entry
-
-    # 也把 root_id 標為 approved
-    if root_id != work_id:
-        root_entry = review_status.get(root_id, {})
-        root_entry["status"] = "approved"
-        root_entry["updated_at"] = datetime.now().isoformat()
-        review_status[root_id] = root_entry
-
+    review_status[base_id] = entry
     save_review_status(review_status)
 
-    # ── 重新寫入 ChromaDB：以最終版本覆蓋 root_id ──
+    # approve：upsert 確保向量庫資料最新（reprocess 已入庫，此處再做一次確認）
     processed_dir = os.path.join(base_dir, "data/processed/moc/images_nobg_final")
-    nobg_file = f"{work_id}_nobg_final.png"   # 使用 reprocess 出來的檔案
+    nobg_file = f"{base_id}_nobg_final.png"
     nobg_path = os.path.join(processed_dir, nobg_file)
-
     if os.path.exists(nobg_path):
         from src.image_pipeline import extract_features_single, compress_vector
         emb = extract_features_single(nobg_path)
@@ -905,19 +857,14 @@ async def api_admin_approve(work_id: str):
             import chromadb
             client = chromadb.PersistentClient(path=chroma_path)
             chroma_collection = client.get_or_create_collection("public_art")
-
             chroma_collection.upsert(
-                ids=[root_id],
+                ids=[base_id],
                 embeddings=[comp.tolist()],
-                metadatas=[{
-                    "id": root_id,
-                    "final_file": nobg_file,
-                    "approved_work_id": work_id,
-                }],
-                documents=[root_id],
+                metadatas=[{"id": base_id, "final_file": nobg_file}],
+                documents=[base_id],
             )
 
-    return {"success": True, "message": "已通過審核（最終版已寫入向量庫）"}
+    return {"success": True, "message": "已通過審核"}
 
 
 @app.post("/api/admin/reject/{work_id}")
@@ -942,10 +889,10 @@ async def api_admin_reject(work_id: str):
 @app.post("/api/admin/reprocess/{work_id}")
 async def api_admin_reprocess(work_id: str, bboxes: list[list[int]] = Body(default=None)):
     """
-    以自訂 bboxes 重新處理作品（支援多選）。
+    重新處理作品（覆蓋模式）。
 
-    流程：SAM 邊緣切割 → DINOv2 向量萃取 → 存入 ChromaDB
-    產出：第2次處理結果圖 + 向量入庫，標記為 pending 待審核。
+    直接覆寫同一 work_id 的圖檔與向量，不產生新卡片。
+    流程：SAM 邊緣切割 → DINOv2 向量萃取 → 覆寫 ChromaDB 向量
     """
     base_dir = os.path.dirname(os.path.abspath(__file__))
     review_status = load_review_status()
@@ -959,25 +906,12 @@ async def api_admin_reprocess(work_id: str, bboxes: list[list[int]] = Body(defau
                 key = item.get("image_file", "").split(".")[0]
                 meta_map[key] = item
 
-    # 解析 work_id（第2次、第3次...）
+    # 解析 base_id（去掉 _2, _3 等 suffix）
     parts = work_id.rsplit("_", 1)
     if len(parts) == 2 and parts[1].isdigit():
         base_id = parts[0]
-        retry_count = int(parts[1]) + 1
     else:
         base_id = work_id
-        retry_count = 2
-
-    new_work_id = f"{base_id}_{retry_count}"
-
-    # 儲存 bboxes
-    entry = review_status.get(work_id, {})
-    entry["status"] = "pending"
-    entry["updated_at"] = datetime.now().isoformat()
-    if bboxes:
-        entry["manual_bboxes"] = bboxes
-    review_status[new_work_id] = entry
-    save_review_status(review_status)
 
     # 找出原始圖片
     orig_dir = os.path.join(base_dir, "data/raw/moc/images")
@@ -990,10 +924,10 @@ async def api_admin_reprocess(work_id: str, bboxes: list[list[int]] = Body(defau
     orig_path = os.path.join(orig_dir, orig_files[0])
     meta = meta_map.get(base_id, {})
 
-    # SAM 切割
+    # SAM 切割（覆蓋原檔）
     processed_dir = os.path.join(base_dir, "data/processed/moc/images_nobg_final")
     os.makedirs(processed_dir, exist_ok=True)
-    out_name = f"{new_work_id}_nobg_final.png"
+    out_name = f"{base_id}_nobg_final.png"
     out_path = os.path.join(processed_dir, out_name)
 
     from src.image_pipeline import segment_artwork_with_bboxes
@@ -1007,31 +941,38 @@ async def api_admin_reprocess(work_id: str, bboxes: list[list[int]] = Body(defau
 
     comp = compress_vector(emb)
 
-    # 存入 ChromaDB
+    # 覆寫 ChromaDB（使用 base_id 作為 id）
     chroma_path = os.path.join(base_dir, "data/chroma_public_art")
     import chromadb
     client = chromadb.PersistentClient(path=chroma_path)
     chroma_collection = client.get_or_create_collection("public_art")
 
     chroma_collection.upsert(
-        ids=[new_work_id],
+        ids=[base_id],
         embeddings=[comp.tolist()],
         metadatas=[{
-            "id": new_work_id,
+            "id": base_id,
             "title": meta.get("title", base_id),
             "artist": meta.get("artist", ""),
             "year": meta.get("year", ""),
             "location": meta.get("location", ""),
             "material": meta.get("material", ""),
             "final_file": out_name,
-            "retry": retry_count,
         }],
         documents=[meta.get("title", base_id)],
     )
 
-    cropped_files = [out_name]
-    return {"success": True, "work_id": new_work_id, "cropped_files": cropped_files,
-            "retry": retry_count, "message": f"第{retry_count}次處理完成，已入庫待審核"}
+    # 標記為 pending（等待再次審核）
+    entry = review_status.get(base_id, {})
+    entry["status"] = "pending"
+    entry["updated_at"] = datetime.now().isoformat()
+    if bboxes:
+        entry["manual_bboxes"] = bboxes
+    review_status[base_id] = entry
+    save_review_status(review_status)
+
+    return {"success": True, "work_id": base_id, "cropped_file": out_name,
+            "message": "已重新處理並覆寫向量庫，請再次審核"}
 
 
 # =============================================================================

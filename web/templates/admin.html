@@ -783,8 +783,8 @@
                 showToast(data.message || `已完成處理（work_id: ${data.work_id}）`, 'success');
 
                 // Update processed image preview with the new work_id file
-                if (data.cropped_files && data.cropped_files[0]) {
-                    document.getElementById('processedImage').src = `/gallery-img/${data.cropped_files[0]}?t=${Date.now()}`;
+                if (data.cropped_file) {
+                    document.getElementById('processedImage').src = `/gallery-img/${data.cropped_file}?t=${Date.now()}`;
                 }
                 updateStats();
                 renderItems();
