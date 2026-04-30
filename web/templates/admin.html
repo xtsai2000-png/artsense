@@ -685,6 +685,7 @@
             document.getElementById('bboxModal').classList.remove('active');
             bboxOrigImg = null;
             bboxRect = null;
+            allBboxes = [];
             pendingRejectId = null;
         }
 
@@ -693,6 +694,10 @@
             const rect = bboxCanvas.getBoundingClientRect();
             bboxStartX = e.clientX - rect.left;
             bboxStartY = e.clientY - rect.top;
+            if (e.shiftKey && bboxRect && bboxRect.w > 5 && bboxRect.h > 5) {
+                // Save previous bbox before starting new one
+                allBboxes.push({ ...bboxRect });
+            }
             bboxIsDrawing = true;
         });
 
@@ -722,7 +727,14 @@
 
             bboxRect = { x: Math.round(x / bboxScaleX), y: Math.round(y / bboxScaleY),
                          w: Math.round(w / bboxScaleX), h: Math.round(h / bboxScaleY) };
-            document.getElementById('bboxHint').textContent = `選取範圍：(${bboxRect.x}, ${bboxRect.y}, ${bboxRect.w}, ${bboxRect.h})  圖片尺寸：${bboxOrigW} × ${bboxOrigH}`;
+            const hintParts = [`圖片尺寸：${bboxOrigW} × ${bboxOrigH}`];
+            if (bboxRect && bboxRect.w > 5 && bboxRect.h > 5) {
+                hintParts.push(`當前：(${bboxRect.x}, ${bboxRect.y}, ${bboxRect.w}, ${bboxRect.h})`);
+            }
+            if (allBboxes.length > 0) {
+                hintParts.push(`已選 ${allBboxes.length} 個區塊`);
+            }
+            document.getElementById('bboxHint').textContent = hintParts.join('｜');
         });
 
         document.addEventListener('mouseup', function() {
@@ -734,20 +746,66 @@
             }
         });
 
+        // Track all bbox selections (for multi-select)
+        let allBboxes = [];
+
+        function openBboxModal() {
+            allBboxes = []; // reset
+            if (!currentItem) return;
+            pendingRejectId = currentItem.id;
+            document.getElementById('compareModal').classList.remove('active');
+            document.getElementById('bboxModal').classList.add('active');
+            const img = document.getElementById('originalImage');
+            bboxOrigImg = new Image();
+            bboxOrigImg.onload = () => {
+                const maxW = Math.min(window.innerWidth * 0.85, 800);
+                const scale = bboxOrigImg.naturalWidth > maxW ? maxW / bboxOrigImg.naturalWidth : 1;
+                bboxCanvas = document.getElementById('bboxCanvas');
+                bboxOrigW = bboxOrigImg.naturalWidth;
+                bboxOrigH = bboxOrigImg.naturalHeight;
+                bboxCanvas.width  = Math.round(bboxOrigW * scale);
+                bboxCanvas.height = Math.round(bboxOrigH * scale);
+                bboxScaleX = bboxCanvas.width  / bboxOrigW;
+                bboxScaleY = bboxCanvas.height / bboxOrigH;
+                bboxCtx = bboxCanvas.getContext('2d');
+                redrawCanvas();
+                document.getElementById('bboxHint').textContent = `圖片尺寸：${bboxOrigW} × ${bboxOrigH} ｜ 按住Shift可選多個區塊`;
+            };
+            bboxOrigImg.src = img.src;
+        }
+
+        function redrawCanvas() {
+            if (!bboxCtx || !bboxOrigImg) return;
+            bboxCtx.clearRect(0, 0, bboxCanvas.width, bboxCanvas.height);
+            bboxCtx.drawImage(bboxOrigImg, 0, 0, bboxCanvas.width, bboxCanvas.height);
+            // Draw all stored bboxes
+            allBboxes.forEach(r => {
+                const sx = r.x * bboxScaleX, sy = r.y * bboxScaleY;
+                const sw = r.w * bboxScaleX, sh = r.h * bboxScaleY;
+                bboxCtx.strokeStyle = '#FF3B30';
+                bboxCtx.lineWidth = 2;
+                bboxCtx.setLineDash([6, 3]);
+                bboxCtx.strokeRect(sx, sy, sw, sh);
+                bboxCtx.fillStyle = 'rgba(255,59,48,0.15)';
+                bboxCtx.fillRect(sx, sy, sw, sh);
+                bboxCtx.setLineDash([]);
+            });
+        }
+
         async function confirmBbox() {
-            if (!bboxRect || bboxRect.w < 5 || bboxRect.h < 5) {
-                showToast('請先拖曳選取有效範圍', 'error');
+            if (allBboxes.length === 0) {
+                showToast('請先拖曳選取至少一個範圍', 'error');
                 return;
             }
             if (!pendingRejectId) return;
 
             try {
+                // Send as plain array (multi: array of 4-element arrays)
+                const body = JSON.stringify(allBboxes.map(r => [r.x, r.y, r.x + r.w, r.y + r.h]));
                 const res = await fetch(`/api/admin/reprocess/${pendingRejectId}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        bbox: [bboxRect.x, bboxRect.y, bboxRect.x + bboxRect.w, bboxRect.y + bboxRect.h]
-                    })
+                    body: body
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || '處理失敗');
@@ -758,7 +816,7 @@
                 if (currentItem && currentItem.id === pendingRejectId) {
                     currentItem.review_status = 'pending';
                     // Update the processed image preview
-                    document.getElementById('processedImage').src = `/gallery-img/${data.cropped_file}?t=${Date.now()}`;
+                    document.getElementById('processedImage').src = `/gallery-img/${data.cropped_files && data.cropped_files[0] ? data.cropped_files[0] : currentItem.id + '_nobg_final.png'}?t=${Date.now()}`;
                 }
                 updateStats();
                 renderItems();

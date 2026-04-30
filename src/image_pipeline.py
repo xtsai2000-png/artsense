@@ -564,3 +564,42 @@ def process_and_index(
         existing_phashes[work_id] = phash
 
     return {"status": "indexed", "message": "入庫成功"}
+
+
+def segment_artwork_with_bboxes(orig_path: str, out_path: str, bboxes: list[list[int]] = None) -> list[str]:
+    """
+    以多組 bboxes 執行 SAM 分割，輸出多張去背圖（合併為一張 RGBA）。
+    若 bboxes 為空或 None，fallback 為自動偵測。
+
+    回傳：輸出的檔案路徑列表（目前只回傳 [out_path]）
+    """
+    pil_raw = Image.open(orig_path).convert("RGB")
+    img_np  = np.array(pil_raw)
+    H, W    = img_np.shape[:2]
+    sam     = get_mobile_sam()
+    sam.set_image(img_np)
+
+    if bboxes and len(bboxes) > 0:
+        # 合併所有 bbox 的 mask
+        combined_mask = np.zeros((H, W), dtype=np.float32)
+        for bbox in bboxes:
+            x1, y1, x2, y2 = bbox
+            # Clamp to image bounds
+            x1, x2 = max(0, min(x1, x2, W)), max(0, min(max(x1, x2), W))
+            y1, y2 = max(0, min(y1, y2, H)), max(0, min(max(y1, y2), H))
+            if x2 - x1 < 5 or y2 - y1 < 5:
+                continue
+            mask, _, _ = sam.predict(
+                point_coords=None, point_labels=None,
+                box=np.array([[x1, y1], [x2, y2]]),
+                multimask_output=False,
+            )
+            combined_mask = np.maximum(combined_mask, mask[0])
+
+        alpha = (combined_mask * 255).astype(np.uint8)
+        rgba  = np.dstack([img_np, alpha])
+        Image.fromarray(rgba).convert("RGBA").save(out_path, "PNG")
+        return [out_path]
+
+    # fallback: 自動偵測
+    return [segment_artwork(orig_path, out_path)]

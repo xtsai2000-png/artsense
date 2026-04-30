@@ -19,7 +19,7 @@ import glob
 from datetime import datetime
 
 # === FastAPI 相關 ===
-from fastapi import FastAPI
+from fastapi import FastAPI, Body
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -859,27 +859,27 @@ async def api_admin_reject(work_id: str):
 
 
 @app.post("/api/admin/reprocess/{work_id}")
-async def api_admin_reprocess(work_id: str, bbox: list[int] = None):
+async def api_admin_reprocess(work_id: str, bboxes: list[list[int]] = Body(default=None)):
     """
-    以自訂 bbox 重新處理作品。
+    以自訂 bboxes 重新處理作品（支援多選）。
 
-    bbox: [x1, y1, x2, y2] — 使用者框選的邊界（像素，圖片自然尺寸）
-    將 status 設為 pending，儲存 bbox 供後續批次處理。
+    bboxes: [[x1, y1, x2, y2], ...] — 每個區塊一組邊界（像素，圖片自然尺寸）
+    將 status 設為 pending，儲存 bboxes 供後續批次處理。
     """
     base_dir = os.path.dirname(os.path.abspath(__file__))
     review_status = load_review_status()
 
-    # 儲存 bbox
+    # 儲存 bboxes
     entry = review_status.get(work_id, {})
     entry["status"] = "pending"
     entry["updated_at"] = datetime.now().isoformat()
-    if bbox and len(bbox) == 4:
-        entry["manual_bbox"] = bbox  # [x1, y1, x2, y2]
+    if bboxes:
+        entry["manual_bboxes"] = bboxes  # [[x1,y1,x2,y2], ...]
 
     review_status[work_id] = entry
     save_review_status(review_status)
 
-    # 執行重新處理（以 SAM bbox prompt）
+    # 執行重新處理（以 SAM bbox prompt，支援多 bbox）
     processed_dir = os.path.join(base_dir, "data/processed/moc/images_nobg_final")
     orig_dir = os.path.join(base_dir, "data/raw/moc/images")
     os.makedirs(processed_dir, exist_ok=True)
@@ -894,10 +894,10 @@ async def api_admin_reprocess(work_id: str, bbox: list[int] = None):
     out_name = f"{base_name}_nobg_final.png"
     out_path = os.path.join(processed_dir, out_name)
 
-    from src.image_pipeline import segment_artwork_with_bbox
-    segment_artwork_with_bbox(orig_path, out_path, bbox)
+    from src.image_pipeline import segment_artwork_with_bboxes
+    cropped_files = segment_artwork_with_bboxes(orig_path, out_path, bboxes)
 
-    return {"success": True, "cropped_file": out_name, "message": "已重新處理"}
+    return {"success": True, "cropped_files": cropped_files, "count": len(bboxes) if bboxes else 0}
 
 
 # =============================================================================
