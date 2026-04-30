@@ -435,10 +435,35 @@
                 <button class="btn btn-approve" onclick="approveItem()">
                     ✅ 通過審核
                 </button>
-                <button class="btn btn-reject" onclick="rejectItem()">
+                <button class="btn btn-reject" onclick="openBboxModal()">
                     ❌ 重新處理
                 </button>
                 <button class="btn btn-secondary" onclick="closeModal()">
+                    取消
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bbox Selection Modal -->
+    <div class="modal" id="bboxModal">
+        <div class="modal-content" style="max-width:900px;">
+            <div class="modal-header">
+                <h3>框選藝術品位置</h3>
+                <button class="modal-close" onclick="closeBboxModal()">×</button>
+            </div>
+            <div class="modal-body" style="text-align:center;">
+                <p style="margin-bottom:0.75rem;color:#666;font-size:0.9rem;">拖曳滑鼠選取藝術品範圍，選完點「確認處理」</p>
+                <div id="bboxCanvasWrapper" style="display:inline-block;position:relative;max-width:100%;overflow:hidden;border:2px solid #667eea;border-radius:8px;">
+                    <canvas id="bboxCanvas" style="display:block;max-width:100%;cursor:crosshair;"></canvas>
+                </div>
+                <p id="bboxHint" style="margin-top:0.5rem;font-size:0.8rem;color:#999;"></p>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-approve" onclick="confirmBbox()">
+                    ✅ 確認處理
+                </button>
+                <button class="btn btn-secondary" onclick="closeBboxModal()">
                     取消
                 </button>
             </div>
@@ -614,6 +639,136 @@
             setTimeout(() => {
                 toast.classList.remove('show');
             }, 3000);
+        }
+
+        // ─── Bbox Selection Modal ───
+        let bboxCanvas, bboxCtx;
+        let bboxOrigImg = null;
+        let bboxOrigW = 0, bboxOrigH = 0;
+        let bboxIsDrawing = false;
+        let bboxStartX = 0, bboxStartY = 0;
+        let bboxRect = null;
+        let bboxScaleX = 1, bboxScaleY = 1;
+        let pendingRejectId = null;
+
+        function openBboxModal() {
+            if (!currentItem) return;
+            pendingRejectId = currentItem.id;
+
+            // Hide compare modal, show bbox modal
+            document.getElementById('compareModal').classList.remove('active');
+            document.getElementById('bboxModal').classList.add('active');
+
+            const img = document.getElementById('originalImage');
+            bboxOrigImg = new Image();
+            bboxOrigImg.onload = () => {
+                const maxW = Math.min(window.innerWidth * 0.85, 800);
+                const scale = bboxOrigImg.naturalWidth > maxW ? maxW / bboxOrigImg.naturalWidth : 1;
+
+                bboxCanvas = document.getElementById('bboxCanvas');
+                bboxOrigW = bboxOrigImg.naturalWidth;
+                bboxOrigH = bboxOrigImg.naturalHeight;
+                bboxCanvas.width  = Math.round(bboxOrigW * scale);
+                bboxCanvas.height = Math.round(bboxOrigH * scale);
+                bboxScaleX = bboxCanvas.width  / bboxOrigW;
+                bboxScaleY = bboxCanvas.height / bboxOrigH;
+
+                bboxCtx = bboxCanvas.getContext('2d');
+                bboxCtx.drawImage(bboxOrigImg, 0, 0, bboxCanvas.width, bboxCanvas.height);
+
+                document.getElementById('bboxHint').textContent = `圖片尺寸：${bboxOrigW} × ${bboxOrigH}`;
+            };
+            bboxOrigImg.src = img.src;
+        }
+
+        function closeBboxModal() {
+            document.getElementById('bboxModal').classList.remove('active');
+            bboxOrigImg = null;
+            bboxRect = null;
+            pendingRejectId = null;
+        }
+
+        // Mouse events for bbox drawing
+        document.getElementById('bboxCanvas') && document.getElementById('bboxCanvas').addEventListener('mousedown', function(e) {
+            const rect = bboxCanvas.getBoundingClientRect();
+            bboxStartX = e.clientX - rect.left;
+            bboxStartY = e.clientY - rect.top;
+            bboxIsDrawing = true;
+        });
+
+        document.addEventListener('mousemove', function(e) {
+            if (!bboxIsDrawing || !bboxCtx) return;
+            const rect = bboxCanvas.getBoundingClientRect();
+            const mx = e.clientX - rect.left;
+            const my = e.clientY - rect.top;
+
+            // Redraw
+            bboxCtx.clearRect(0, 0, bboxCanvas.width, bboxCanvas.height);
+            bboxCtx.drawImage(bboxOrigImg, 0, 0, bboxCanvas.width, bboxCanvas.height);
+
+            // Draw rect
+            const x = Math.min(bboxStartX, mx);
+            const y = Math.min(bboxStartY, my);
+            const w = Math.abs(mx - bboxStartX);
+            const h = Math.abs(my - bboxStartY);
+
+            bboxCtx.strokeStyle = '#FF3B30';
+            bboxCtx.lineWidth = 2;
+            bboxCtx.setLineDash([6, 3]);
+            bboxCtx.strokeRect(x, y, w, h);
+            bboxCtx.fillStyle = 'rgba(255,59,48,0.15)';
+            bboxCtx.fillRect(x, y, w, h);
+            bboxCtx.setLineDash([]);
+
+            bboxRect = { x: Math.round(x / bboxScaleX), y: Math.round(y / bboxScaleY),
+                         w: Math.round(w / bboxScaleX), h: Math.round(h / bboxScaleY) };
+            document.getElementById('bboxHint').textContent = `選取範圍：(${bboxRect.x}, ${bboxRect.y}, ${bboxRect.w}, ${bboxRect.h})  圖片尺寸：${bboxOrigW} × ${bboxOrigH}`;
+        });
+
+        document.addEventListener('mouseup', function() {
+            if (bboxIsDrawing) {
+                bboxIsDrawing = false;
+                if (bboxRect && bboxRect.w > 5 && bboxRect.h > 5) {
+                    // valid selection
+                }
+            }
+        });
+
+        async function confirmBbox() {
+            if (!bboxRect || bboxRect.w < 5 || bboxRect.h < 5) {
+                showToast('請先拖曳選取有效範圍', 'error');
+                return;
+            }
+            if (!pendingRejectId) return;
+
+            try {
+                const res = await fetch(`/api/admin/reprocess/${pendingRejectId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        bbox: [bboxRect.x, bboxRect.y, bboxRect.x + bboxRect.w, bboxRect.y + bboxRect.h]
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '處理失敗');
+
+                showToast('已重新處理並標記為待審核', 'success');
+
+                // Reload current item data
+                if (currentItem && currentItem.id === pendingRejectId) {
+                    currentItem.review_status = 'pending';
+                    // Update the processed image preview
+                    document.getElementById('processedImage').src = `/gallery-img/${data.cropped_file}?t=${Date.now()}`;
+                }
+                updateStats();
+                renderItems();
+
+                closeBboxModal();
+                document.getElementById('compareModal').classList.add('active');
+
+            } catch (err) {
+                showToast('處理失敗: ' + err.message, 'error');
+            }
         }
 
         // Close modal on escape key

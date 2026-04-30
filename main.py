@@ -858,6 +858,48 @@ async def api_admin_reject(work_id: str):
     return {"success": True, "message": "已標記為需要重新處理"}
 
 
+@app.post("/api/admin/reprocess/{work_id}")
+async def api_admin_reprocess(work_id: str, bbox: list[int] = None):
+    """
+    以自訂 bbox 重新處理作品。
+
+    bbox: [x1, y1, x2, y2] — 使用者框選的邊界（像素，圖片自然尺寸）
+    將 status 設為 pending，儲存 bbox 供後續批次處理。
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    review_status = load_review_status()
+
+    # 儲存 bbox
+    entry = review_status.get(work_id, {})
+    entry["status"] = "pending"
+    entry["updated_at"] = datetime.now().isoformat()
+    if bbox and len(bbox) == 4:
+        entry["manual_bbox"] = bbox  # [x1, y1, x2, y2]
+
+    review_status[work_id] = entry
+    save_review_status(review_status)
+
+    # 執行重新處理（以 SAM bbox prompt）
+    processed_dir = os.path.join(base_dir, "data/processed/moc/images_nobg_final")
+    orig_dir = os.path.join(base_dir, "data/raw/moc/images")
+    os.makedirs(processed_dir, exist_ok=True)
+
+    base_name = work_id
+    orig_files = [f for f in os.listdir(orig_dir)
+                  if f.startswith(base_name) and f.lower().endswith(('.jpg','.jpeg','.png','.webp'))]
+    if not orig_files:
+        return {"success": False, "error": f"找不到原始圖片：{work_id}"}
+
+    orig_path = os.path.join(orig_dir, orig_files[0])
+    out_name = f"{base_name}_nobg_final.png"
+    out_path = os.path.join(processed_dir, out_name)
+
+    from src.image_pipeline import segment_artwork_with_bbox
+    segment_artwork_with_bbox(orig_path, out_path, bbox)
+
+    return {"success": True, "cropped_file": out_name, "message": "已重新處理"}
+
+
 # =============================================================================
 # 相似度比對流程
 # =============================================================================

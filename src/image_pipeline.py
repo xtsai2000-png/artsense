@@ -241,25 +241,38 @@ def segment_artwork(orig_path: str, out_path: str) -> str:
     - 找不到：rembg fallback → SAM center prompt 強化
     回傳輸出路徑。
     """
+    return segment_artwork_with_bbox(orig_path, out_path, None)
+
+
+def segment_artwork_with_bbox(orig_path: str, out_path: str, bbox: list = None) -> str:
+    """
+    以指定或自動偵測的 bbox 執行分割。
+
+    bbox: [x1, y1, x2, y2]（像素），None 表示由 YOLO 自動偵測。
+    """
     from rembg import remove
 
     pil_raw = Image.open(orig_path).convert("RGB")
     img_np  = np.array(pil_raw)
 
-    yolo   = get_yolo()
-    sam    = get_mobile_sam()
+    sam = get_mobile_sam()
 
-    # ── Step 1: YOLO ──
-    boxes    = yolo(orig_path, verbose=False)[0].boxes
-    yolo_box = None
-    if len(boxes) > 0:
-        best = max(boxes, key=lambda b: float(b.conf[0]))
-        if float(best.conf[0]) >= 0.25:
-            x1, y1, x2, y2 = map(int, best.xyxy[0].tolist())
-            if (x2 - x1) >= 50 and (y2 - y1) >= 50:
-                yolo_box = (x1, y1, x2, y2)
+    if bbox and len(bbox) == 4:
+        # 使用使用者手動框選的區域
+        x1, y1, x2, y2 = bbox
+        sam.set_image(img_np)
+        mask, _, _ = sam.predict(
+            point_coords=None, point_labels=None,
+            box=np.array([[x1, y1], [x2, y2]]),
+            multimask_output=False,
+        )
+        alpha = (mask[0] * 255).astype(np.uint8)
+        rgba  = np.dstack([img_np, alpha])
+        Image.fromarray(rgba).convert("RGBA").save(out_path, "PNG")
+        return out_path
 
-    # ── Step 2a: SAM bbox ──
+    # 否則自動偵測（同原本邏輯）
+    yolo_box = _detect_yolo_box(orig_path, pil_raw, img_np)
     if yolo_box is not None:
         sam.set_image(img_np)
         mask, _, _ = sam.predict(
@@ -268,12 +281,12 @@ def segment_artwork(orig_path: str, out_path: str) -> str:
                           [yolo_box[2], yolo_box[3]]]),
             multimask_output=False,
         )
-        alpha  = (mask[0] * 255).astype(np.uint8)
-        rgba   = np.dstack([img_np, alpha])
+        alpha = (mask[0] * 255).astype(np.uint8)
+        rgba  = np.dstack([img_np, alpha])
         Image.fromarray(rgba).convert("RGBA").save(out_path, "PNG")
         return out_path
 
-    # ── Step 2b: rembg → SAM center ──
+    # fallback: rembg + SAM center
     rembg_np = np.array(remove(pil_raw))
     if rembg_np.ndim == 3 and rembg_np.shape[2] == 4:
         alpha_ch = rembg_np[:, :, 3]
@@ -302,10 +315,22 @@ def segment_artwork(orig_path: str, out_path: str) -> str:
         rgba = np.dstack([img_np, full_mask])
         Image.fromarray(rgba).convert("RGBA").save(out_path, "PNG")
     else:
-        # 完全失敗，存 rembg 結果
         Image.fromarray(rembg_np).save(out_path, "PNG")
 
     return out_path
+
+
+def _detect_yolo_box(orig_path, pil_raw, img_np):
+    """由 YOLO 偵測主體 bounding box"""
+    yolo = get_yolo()
+    boxes = yolo(orig_path, verbose=False)[0].boxes
+    if len(boxes) > 0:
+        best = max(boxes, key=lambda b: float(b.conf[0]))
+        if float(best.conf[0]) >= 0.25:
+            x1, y1, x2, y2 = map(int, best.xyxy[0].tolist())
+            if (x2 - x1) >= 50 and (y2 - y1) >= 50:
+                return (x1, y1, x2, y2)
+    return None
 
 
 # =============================================================================
