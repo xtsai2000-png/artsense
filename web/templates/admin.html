@@ -123,6 +123,18 @@
             background: #d4edda;
             color: #155724;
         }
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+        .btn-danger:hover {
+            background: #c82333;
+        }
         .status.rejected {
             background: #f8d7da;
             color: #721c24;
@@ -394,7 +406,7 @@
         <div class="nav-tabs">
             <button class="nav-tab active" data-tab="pending">待審核</button>
             <button class="nav-tab" data-tab="approved">已通過</button>
-            <button class="nav-tab" data-tab="rejected">需重處理</button>
+            <!-- 需重處理 tab removed -->
             <button class="nav-tab" data-tab="all">全部</button>
         </div>
 
@@ -437,6 +449,9 @@
                 </button>
                 <button class="btn btn-reject" onclick="openBboxModal()">
                     ❌ 重新處理
+                </button>
+                <button class="btn btn-danger" onclick="deleteItem()">
+                    🗑️ 刪除
                 </button>
                 <button class="btn btn-secondary" onclick="closeModal()">
                     取消
@@ -556,7 +571,7 @@
             const map = {
                 pending: '待審核',
                 approved: '已通過',
-                rejected: '需重處理'
+                'rejected_tab': '需重處理' /* removed */
             };
             return map[status] || status;
         }
@@ -589,6 +604,25 @@
             document.getElementById('compareModal').classList.remove('active');
             currentItem = null;
         }
+        async function deleteItem() {
+            if (!currentItem) return;
+            if (!confirm(`確定要刪除「${currentItem.title || currentItem.id}」嗎？`)) return;
+
+            try {
+                const res = await fetch(`/api/admin/delete/${currentItem.id}`, { method: 'DELETE' });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '刪除失敗');
+
+                showToast('已刪除', 'success');
+                closeModal();
+                updateStats();
+                renderItems();
+            } catch (err) {
+                showToast('刪除失敗: ' + err.message, 'error');
+            }
+        }
+
+
 
 
         function closeBboxModal() {

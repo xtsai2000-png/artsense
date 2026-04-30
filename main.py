@@ -886,6 +886,47 @@ async def api_admin_reject(work_id: str):
     return {"success": True, "message": "已標記為需要重新處理"}
 
 
+@app.delete("/api/admin/delete/{work_id}")
+async def api_admin_delete(work_id: str):
+    """
+    刪除作品。
+
+    從 review_status 移除，刪除處理過的圖檔，並從 ChromaDB 移除向量。
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    review_status = load_review_status()
+
+    # 解析 base_id
+    parts = work_id.rsplit("_", 1)
+    base_id = parts[0] if len(parts) == 2 and parts[1].isdigit() else work_id
+
+    # 從 review_status 移除
+    for key in [work_id, base_id]:
+        if key in review_status:
+            del review_status[key]
+    save_review_status(review_status)
+
+    # 刪除處理過的圖檔
+    processed_dir = os.path.join(base_dir, "data/processed/moc/images_nobg_final")
+    for fname in [f"{base_id}_nobg_final.png", f"{work_id}_nobg_final.png"]:
+        fpath = os.path.join(processed_dir, fname)
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+    # 從 ChromaDB 移除
+    chroma_path = os.path.join(base_dir, "data/chroma_public_art")
+    if os.path.exists(chroma_path):
+        import chromadb
+        client = chromadb.PersistentClient(path=chroma_path)
+        try:
+            chroma_collection = client.get_collection("public_art")
+            chroma_collection.delete(ids=[base_id])
+        except Exception:
+            pass
+
+    return {"success": True, "message": "已刪除"}
+
+
 @app.post("/api/admin/reprocess/{work_id}")
 async def api_admin_reprocess(work_id: str, bboxes: list[list[int]] = Body(default=None)):
     """
