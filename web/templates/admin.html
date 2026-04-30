@@ -770,15 +770,13 @@
                     body: body
                 });
                 const data = await res.json();
-                if (!res.ok) throw new Error(data.error || '處理失敗');
+                if (!res.ok) throw new Error(data.error || data.detail || '處理失敗');
 
-                showToast('已重新處理並標記為待審核', 'success');
+                showToast(data.message || `已完成處理（work_id: ${data.work_id}）`, 'success');
 
-                // Reload current item data
-                if (currentItem && currentItem.id === pendingRejectId) {
-                    currentItem.review_status = 'pending';
-                    // Update the processed image preview
-                    document.getElementById('processedImage').src = `/gallery-img/${data.cropped_files && data.cropped_files[0] ? data.cropped_files[0] : currentItem.id + '_nobg_final.png'}?t=${Date.now()}`;
+                // Update processed image preview with the new work_id file
+                if (data.cropped_files && data.cropped_files[0]) {
+                    document.getElementById('processedImage').src = `/gallery-img/${data.cropped_files[0]}?t=${Date.now()}`;
                 }
                 updateStats();
                 renderItems();

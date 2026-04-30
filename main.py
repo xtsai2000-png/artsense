@@ -863,41 +863,94 @@ async def api_admin_reprocess(work_id: str, bboxes: list[list[int]] = Body(defau
     """
     以自訂 bboxes 重新處理作品（支援多選）。
 
-    bboxes: [[x1, y1, x2, y2], ...] — 每個區塊一組邊界（像素，圖片自然尺寸）
-    將 status 設為 pending，儲存 bboxes 供後續批次處理。
+    流程：SAM 邊緣切割 → DINOv2 向量萃取 → 存入 ChromaDB
+    產出：第2次處理結果圖 + 向量入庫，標記為 pending 待審核。
     """
     base_dir = os.path.dirname(os.path.abspath(__file__))
     review_status = load_review_status()
+
+    # 讀取 metadata
+    metadata_file = os.path.join(base_dir, "data/raw/moc/works_metadata.json")
+    meta_map = {}
+    if os.path.exists(metadata_file):
+        with open(metadata_file, "r", encoding="utf-8") as f:
+            for item in json.load(f):
+                key = item.get("image_file", "").split(".")[0]
+                meta_map[key] = item
+
+    # 解析 work_id（第2次、第3次...）
+    parts = work_id.rsplit("_", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        base_id = parts[0]
+        retry_count = int(parts[1]) + 1
+    else:
+        base_id = work_id
+        retry_count = 2
+
+    new_work_id = f"{base_id}_{retry_count}"
 
     # 儲存 bboxes
     entry = review_status.get(work_id, {})
     entry["status"] = "pending"
     entry["updated_at"] = datetime.now().isoformat()
     if bboxes:
-        entry["manual_bboxes"] = bboxes  # [[x1,y1,x2,y2], ...]
-
-    review_status[work_id] = entry
+        entry["manual_bboxes"] = bboxes
+    review_status[new_work_id] = entry
     save_review_status(review_status)
 
-    # 執行重新處理（以 SAM bbox prompt，支援多 bbox）
-    processed_dir = os.path.join(base_dir, "data/processed/moc/images_nobg_final")
+    # 找出原始圖片
     orig_dir = os.path.join(base_dir, "data/raw/moc/images")
-    os.makedirs(processed_dir, exist_ok=True)
-
-    base_name = work_id
     orig_files = [f for f in os.listdir(orig_dir)
-                  if f.startswith(base_name) and f.lower().endswith(('.jpg','.jpeg','.png','.webp'))]
+                  if f.startswith(base_id + ".") or f.startswith(base_id + "_")
+                  and f.lower().endswith(('.jpg','.jpeg','.png','.webp'))]
     if not orig_files:
-        return {"success": False, "error": f"找不到原始圖片：{work_id}"}
+        return {"success": False, "error": f"找不到原始圖片：{base_id}"}
 
     orig_path = os.path.join(orig_dir, orig_files[0])
-    out_name = f"{base_name}_nobg_final.png"
+    meta = meta_map.get(base_id, {})
+
+    # SAM 切割
+    processed_dir = os.path.join(base_dir, "data/processed/moc/images_nobg_final")
+    os.makedirs(processed_dir, exist_ok=True)
+    out_name = f"{new_work_id}_nobg_final.png"
     out_path = os.path.join(processed_dir, out_name)
 
     from src.image_pipeline import segment_artwork_with_bboxes
-    cropped_files = segment_artwork_with_bboxes(orig_path, out_path, bboxes)
+    segment_artwork_with_bboxes(orig_path, out_path, bboxes)
 
-    return {"success": True, "cropped_files": cropped_files, "count": len(bboxes) if bboxes else 0}
+    # DINOv2 特徵萃取
+    from src.image_pipeline import extract_features_single, compress_vector
+    emb = extract_features_single(out_path)
+    if emb is None:
+        return {"success": False, "error": "特徵萃取失敗"}
+
+    comp = compress_vector(emb)
+
+    # 存入 ChromaDB
+    chroma_path = os.path.join(base_dir, "data/chroma_public_art")
+    import chromadb
+    client = chromadb.PersistentClient(path=chroma_path)
+    chroma_collection = client.get_or_create_collection("public_art")
+
+    chroma_collection.upsert(
+        ids=[new_work_id],
+        embeddings=[comp.tolist()],
+        metadatas=[{
+            "id": new_work_id,
+            "title": meta.get("title", base_id),
+            "artist": meta.get("artist", ""),
+            "year": meta.get("year", ""),
+            "location": meta.get("location", ""),
+            "material": meta.get("material", ""),
+            "final_file": out_name,
+            "retry": retry_count,
+        }],
+        documents=[meta.get("title", base_id)],
+    )
+
+    cropped_files = [out_name]
+    return {"success": True, "work_id": new_work_id, "cropped_files": cropped_files,
+            "retry": retry_count, "message": f"第{retry_count}次處理完成，已入庫待審核"}
 
 
 # =============================================================================
