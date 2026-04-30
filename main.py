@@ -817,9 +817,6 @@ async def api_admin_works():
                 "review_status": status,
             })
 
-    return works
-
-
     # ── 加入 reprocess 產生的多版本項目（base_id_2, base_id_3...） ──
     existing_ids = {w["id"] for w in works}
     if os.path.exists(processed_dir):
