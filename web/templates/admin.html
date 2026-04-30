@@ -590,6 +590,14 @@
             currentItem = null;
         }
 
+
+        function closeBboxModal() {
+            document.getElementById('bboxModal').classList.remove('active');
+            if (currentItem) document.getElementById('compareModal').classList.add('active');
+            allBboxes = [];
+            bboxRect = null;
+            bboxIsDrawing = false;
+        }
         async function approveItem() {
             if (!currentItem) return;
 
