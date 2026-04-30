@@ -241,36 +241,39 @@ async def crawl_single_work(work_id: str) -> Optional[Artwork]:
     url = f"{WORK_LIST_URL}/{work_id}"
 
     try:
-        context = await httpx.AsyncClient().acr()
-        browser_context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
-        )
-        page = await browser_context.new_page()
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            browser_context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+            )
+            page = await browser_context.new_page()
 
-        response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
-        # HTTP 狀態碼不是 200 代表頁面不存在
-        if response.status != 200:
+            # HTTP 狀態碼不是 200 代表頁面不存在
+            if response.status != 200:
+                await browser_context.close()
+                await browser.close()
+                return None
+
+            # 等待 Angular 渲染
+            await asyncio.sleep(3)
+
+            # 等待主要內容元素 .evtitle 出現（最多等 15 秒）
+            try:
+                await page.wait_for_selector('.evtitle', timeout=15000)
+            except:
+                pass  # 容錯：沒等到也繼續
+
+            # 取得完整 HTML 並解析
+            html = await page.content()
+            artwork = parse_work_html(html, work_id)
+
             await browser_context.close()
-            return None
-
-        # 等待 Angular 渲染
-        await asyncio.sleep(2)
-
-        # 等待主要內容元素 .evtitle 出現
-        try:
-            await page.wait_for_selector('.evtitle', timeout=10000)
-        except:
-            pass                                                    # 容錯：沒等到也繼續
-
-        # 取得完整 HTML 並解析
-        html = await page.content()
-        artwork = parse_work_html(html, work_id)
-
-        await browser_context.close()
-        return artwork
-
+            await browser.close()
+            return artwork
     except Exception as e:
+        print(f"  ⚠️ 例外: {e}")
         return None
 
 

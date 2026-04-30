@@ -406,9 +406,9 @@ async def home():
     </body>
     </html>
     """
-    # 將 HTML 中的預留位置替換為實際數值
-    html_content = html_content.replace("__IMAGE_COUNT__", str(PROJECT_DATA["image_count"]))
-    html_content = html_content.replace("__DINO_COUNT__", str(PROJECT_DATA["dino_count"]))
+    # 將 HTML 中的預留位置替換為實際數值（每次渲染時動態抓取）
+    html_content = html_content.replace("__IMAGE_COUNT__", str(get_image_count()))
+    html_content = html_content.replace("__DINO_COUNT__", str(get_dino_count()))
     return HTMLResponse(content=html_content)
 
 
@@ -595,7 +595,8 @@ async def api_status():
     return {
         "status": "online",
         "version": "MVP v0.1",
-        "image_count": PROJECT_DATA["image_count"],
+        "image_count": get_image_count(),
+        "dino_count": get_dino_count(),
         "target_count": 30000,
     }
 
