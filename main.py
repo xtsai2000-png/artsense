@@ -825,18 +825,63 @@ async def api_admin_approve(work_id: str):
     """
     通過審核
 
-    將作品標記為已通過審核，寫入 DINOv2 特徵至 ChromaDB。
+    將作品標記為已通過審核，並以最終版本（最新 retry）重新寫入向量庫。
+    - 解析 work_id 取得 root_id（如 base_id_3 → base_id）
+    - 從 processed 資料夾找對應的 _nobg_final.png 圖檔
+    - 重新萃取 DINOv2 特徵，upsert 至 ChromaDB（id 為 root_id，覆蓋舊記錄）
     """
     base_dir = os.path.dirname(os.path.abspath(__file__))
     review_status = load_review_status()
 
-    review_status[work_id] = {
-        "status": "approved",
-        "updated_at": datetime.now().isoformat()
-    }
+    # 解析 root_id
+    parts = work_id.rsplit("_", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        root_id = parts[0]
+    else:
+        root_id = work_id
+
+    # 標記 status
+    entry = review_status.get(work_id, {})
+    entry["status"] = "approved"
+    entry["updated_at"] = datetime.now().isoformat()
+    review_status[work_id] = entry
+
+    # 也把 root_id 標為 approved
+    if root_id != work_id:
+        root_entry = review_status.get(root_id, {})
+        root_entry["status"] = "approved"
+        root_entry["updated_at"] = datetime.now().isoformat()
+        review_status[root_id] = root_entry
+
     save_review_status(review_status)
 
-    return {"success": True, "message": "已通過審核"}
+    # ── 重新寫入 ChromaDB：以最終版本覆蓋 root_id ──
+    processed_dir = os.path.join(base_dir, "data/processed/moc/images_nobg_final")
+    nobg_file = f"{work_id}_nobg_final.png"   # 使用 reprocess 出來的檔案
+    nobg_path = os.path.join(processed_dir, nobg_file)
+
+    if os.path.exists(nobg_path):
+        from src.image_pipeline import extract_features_single, compress_vector
+        emb = extract_features_single(nobg_path)
+        if emb is not None:
+            comp = compress_vector(emb)
+            chroma_path = os.path.join(base_dir, "data/chroma_public_art")
+            import chromadb
+            client = chromadb.PersistentClient(path=chroma_path)
+            chroma_collection = client.get_or_create_collection("public_art")
+
+            chroma_collection.upsert(
+                ids=[root_id],
+                embeddings=[comp.tolist()],
+                metadatas=[{
+                    "id": root_id,
+                    "final_file": nobg_file,
+                    "approved_work_id": work_id,
+                }],
+                documents=[root_id],
+            )
+
+    return {"success": True, "message": "已通過審核（最終版已寫入向量庫）"}
 
 
 @app.post("/api/admin/reject/{work_id}")
