@@ -642,112 +642,73 @@
         }
 
         // ─── Bbox Selection Modal ───
-        let bboxCanvas, bboxCtx;
-        let bboxOrigImg = null;
-        let bboxOrigW = 0, bboxOrigH = 0;
+        let allBboxes = [];
         let bboxIsDrawing = false;
         let bboxStartX = 0, bboxStartY = 0;
         let bboxRect = null;
+        let bboxOrigImg = null;
+        let bboxCanvas = null, bboxCtx = null;
+        let bboxOrigW = 0, bboxOrigH = 0;
         let bboxScaleX = 1, bboxScaleY = 1;
         let pendingRejectId = null;
 
-        function openBboxModal() {
-            if (!currentItem) return;
-            pendingRejectId = currentItem.id;
-
-            // Hide compare modal, show bbox modal
-            document.getElementById('compareModal').classList.remove('active');
-            document.getElementById('bboxModal').classList.add('active');
-
-            const img = document.getElementById('originalImage');
-            bboxOrigImg = new Image();
-            bboxOrigImg.onload = () => {
-                const maxW = Math.min(window.innerWidth * 0.85, 800);
-                const scale = bboxOrigImg.naturalWidth > maxW ? maxW / bboxOrigImg.naturalWidth : 1;
-
-                bboxCanvas = document.getElementById('bboxCanvas');
-                bboxOrigW = bboxOrigImg.naturalWidth;
-                bboxOrigH = bboxOrigImg.naturalHeight;
-                bboxCanvas.width  = Math.round(bboxOrigW * scale);
-                bboxCanvas.height = Math.round(bboxOrigH * scale);
-                bboxScaleX = bboxCanvas.width  / bboxOrigW;
-                bboxScaleY = bboxCanvas.height / bboxOrigH;
-
-                bboxCtx = bboxCanvas.getContext('2d');
-                bboxCtx.drawImage(bboxOrigImg, 0, 0, bboxCanvas.width, bboxCanvas.height);
-
-                document.getElementById('bboxHint').textContent = `圖片尺寸：${bboxOrigW} × ${bboxOrigH}`;
-            };
-            bboxOrigImg.src = img.src;
+        // Canvas coordinate helper
+        function bboxCanvasPos(e) {
+            const rect = bboxCanvas.getBoundingClientRect();
+            return { x: e.clientX - rect.left, y: e.clientY - rect.top };
         }
 
-        function closeBboxModal() {
-            document.getElementById('bboxModal').classList.remove('active');
-            bboxOrigImg = null;
-            bboxRect = null;
-            allBboxes = [];
-            pendingRejectId = null;
-        }
+        // Set up canvas mouse events ONCE (canvas element is always in DOM)
+        (function setupBboxCanvas() {
+            const canvas = document.getElementById('bboxCanvas');
 
-        // Mouse events for bbox drawing
-        document.getElementById('bboxCanvas') && document.getElementById('bboxCanvas').addEventListener('mousedown', function(e) {
-            const rect = bboxCanvas.getBoundingClientRect();
-            bboxStartX = e.clientX - rect.left;
-            bboxStartY = e.clientY - rect.top;
-            if (e.shiftKey && bboxRect && bboxRect.w > 5 && bboxRect.h > 5) {
-                // Save previous bbox before starting new one
-                allBboxes.push({ ...bboxRect });
-            }
-            bboxIsDrawing = true;
-        });
+            canvas.addEventListener('mousedown', function(e) {
+                const pos = bboxCanvasPos(e);
+                bboxStartX = pos.x; bboxStartY = pos.y;
+                bboxIsDrawing = true;
+                e.preventDefault();
+            });
 
-        document.addEventListener('mousemove', function(e) {
-            if (!bboxIsDrawing || !bboxCtx) return;
-            const rect = bboxCanvas.getBoundingClientRect();
-            const mx = e.clientX - rect.left;
-            const my = e.clientY - rect.top;
+            document.addEventListener('mousemove', function(e) {
+                if (!bboxIsDrawing || !bboxCtx) return;
+                const pos = bboxCanvasPos(e);
+                const x = Math.min(bboxStartX, pos.x), y = Math.min(bboxStartY, pos.y);
+                const w = Math.abs(pos.x - bboxStartX), h = Math.abs(pos.y - bboxStartY);
 
-            // Redraw
-            bboxCtx.clearRect(0, 0, bboxCanvas.width, bboxCanvas.height);
-            bboxCtx.drawImage(bboxOrigImg, 0, 0, bboxCanvas.width, bboxCanvas.height);
+                redrawCanvas();
 
-            // Draw rect
-            const x = Math.min(bboxStartX, mx);
-            const y = Math.min(bboxStartY, my);
-            const w = Math.abs(mx - bboxStartX);
-            const h = Math.abs(my - bboxStartY);
+                bboxCtx.strokeStyle = '#FF3B30';
+                bboxCtx.lineWidth = 2;
+                bboxCtx.setLineDash([6, 3]);
+                bboxCtx.strokeRect(x, y, w, h);
+                bboxCtx.fillStyle = 'rgba(255,59,48,0.15)';
+                bboxCtx.fillRect(x, y, w, h);
+                bboxCtx.setLineDash([]);
 
-            bboxCtx.strokeStyle = '#FF3B30';
-            bboxCtx.lineWidth = 2;
-            bboxCtx.setLineDash([6, 3]);
-            bboxCtx.strokeRect(x, y, w, h);
-            bboxCtx.fillStyle = 'rgba(255,59,48,0.15)';
-            bboxCtx.fillRect(x, y, w, h);
-            bboxCtx.setLineDash([]);
+                bboxRect = {
+                    x: Math.round(x / bboxScaleX),
+                    y: Math.round(y / bboxScaleY),
+                    w: Math.round(w / bboxScaleX),
+                    h: Math.round(h / bboxScaleY)
+                };
 
-            bboxRect = { x: Math.round(x / bboxScaleX), y: Math.round(y / bboxScaleY),
-                         w: Math.round(w / bboxScaleX), h: Math.round(h / bboxScaleY) };
-            const hintParts = [`圖片尺寸：${bboxOrigW} × ${bboxOrigH}`];
-            if (bboxRect && bboxRect.w > 5 && bboxRect.h > 5) {
-                hintParts.push(`當前：(${bboxRect.x}, ${bboxRect.y}, ${bboxRect.w}, ${bboxRect.h})`);
-            }
-            if (allBboxes.length > 0) {
-                hintParts.push(`已選 ${allBboxes.length} 個區塊`);
-            }
-            document.getElementById('bboxHint').textContent = hintParts.join('｜');
-        });
+                const hints = [`圖片：${bboxOrigW}×${bboxOrigH}`];
+                if (allBboxes.length > 0) hints.push(`已選 ${allBboxes.length} 個`);
+                document.getElementById('bboxHint').textContent = hints.join('｜');
+            });
 
-        document.addEventListener('mouseup', function() {
-            if (bboxIsDrawing) {
+            document.addEventListener('mouseup', function(e) {
+                if (!bboxIsDrawing) return;
                 bboxIsDrawing = false;
                 if (bboxRect && bboxRect.w > 5 && bboxRect.h > 5) {
-                    // valid selection
+                    allBboxes.push({ ...bboxRect });
+                    redrawCanvas();
+                    const hints = [`圖片：${bboxOrigW}×${bboxOrigH}`];
+                    hints.push(`已選 ${allBboxes.length} 個`);
+                    document.getElementById('bboxHint').textContent = hints.join('｜');
                 }
-            }
-        });
-
-        // Track all bbox selections (for multi-select)
-        let allBboxes = [];
+            });
+        })();
 
         function openBboxModal() {
             allBboxes = []; // reset
@@ -768,6 +729,7 @@
                 bboxScaleX = bboxCanvas.width  / bboxOrigW;
                 bboxScaleY = bboxCanvas.height / bboxOrigH;
                 bboxCtx = bboxCanvas.getContext('2d');
+                allBboxes = [];
                 redrawCanvas();
                 document.getElementById('bboxHint').textContent = `圖片尺寸：${bboxOrigW} × ${bboxOrigH} ｜ 按住Shift可選多個區塊`;
             };
